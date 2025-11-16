@@ -1,0 +1,85 @@
+services:
+
+  postgres:
+    image: postgres:15
+    container_name: mailscout-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=mailscout
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: mailscout-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  backend:
+    image: mailscout/backend
+    container_name: mailscout-backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/mailscout
+      - REDIS_URL=redis://redis:6379/0
+      - QUEUE_KEY=mailscout:jobs
+      - UPLOAD_PATH=/data/uploads
+      - CHUNK_SIZE=1000
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend_uploads:/data/uploads
+
+  worker:
+    image: mailscout/worker
+    container_name: mailscout-worker
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/mailscout
+      - REDIS_URL=redis://redis:6379/0
+      - QUEUE_KEY=mailscout:jobs
+      - CONCURRENCY=100
+      - PER_MX_LIMIT=5
+    depends_on:
+      - postgres
+      - redis
+
+  frontend:
+    image: mailscout/frontend
+    container_name: mailscout-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+
+  autoscaler:
+    image: mailscout/autoscaler
+    container_name: mailscout-autoscaler
+    restart: unless-stopped
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - QUEUE_KEY=mailscout:jobs
+      - FLY_WORKER_APP=local-worker
+      - MIN_WORKERS=1
+      - MAX_WORKERS=10
+      - SCALE_UP_THRESHOLD=2000
+      - SCALE_DOWN_THRESHOLD=200
+      - INTERVAL=10
+    depends_on:
+      - redis
+
+volumes:
+  pgdata:
+  redis-data:
+  backend_uploads:

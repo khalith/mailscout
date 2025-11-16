@@ -1,0 +1,33 @@
+# fly.autoscaler.toml
+app = "mailscout-autoscaler"
+kill_signal = "SIGINT"
+kill_timeout = 5
+
+[build]
+  builder = "heroku/buildpacks:20"
+
+[env]
+  QUEUE_KEY = "mailscout:jobs"
+  FLY_WORKER_APP = "mailscout-worker"
+  MIN_WORKERS = "1"
+  MAX_WORKERS = "20"
+  SCALE_UP_THRESHOLD = "2000"
+  SCALE_DOWN_THRESHOLD = "200"
+  INTERVAL = "20"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 8080
+    handlers = ["http"]
+
+  [services.http_checks]
+    interval = "30s"
+    timeout = "5s"
+    path = "/"
+    method = "GET"
+    protocol = "http"
+    grace_period = "5s"
+    restart_limit = 0

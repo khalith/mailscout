@@ -1,0 +1,35 @@
+# fly.worker.toml
+app = "mailscout-worker"
+kill_signal = "SIGINT"
+kill_timeout = 5
+
+[build]
+  builder = "heroku/buildpacks:20"
+
+[env]
+  QUEUE_KEY = "mailscout:jobs"
+  CONCURRENCY = "100"       # per-instance concurrency
+  PER_MX_LIMIT = "5"
+  INSERT_BATCH_SIZE = "200"
+
+[experimental]
+  auto_rollback = true
+
+# Worker has no HTTP ports — it's a background service.
+[[services]]
+  internal_port = 9000
+  protocol = "tcp"
+
+  # We do not expose HTTP; but we keep a TCP healthcheck port if needed.
+  [[services.ports]]
+    port = 9000
+
+  [services.tcp_checks]
+    grace_period = "10s"
+    interval = "20s"
+    timeout = "3s"
+    port = 9000
+    restart_limit = 0
+
+# Recommended scale (manual or via autoscaler)
+# You can configure desired count via Fly CLI: `fly scale count N -a mailscout-worker`
