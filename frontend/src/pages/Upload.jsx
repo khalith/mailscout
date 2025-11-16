@@ -14,14 +14,11 @@ const POLL_INTERVAL_ACTIVE = 2000; // ms when upload is active
 const POLL_INTERVAL_IDLE = 5000;   // ms when no uploadId or finished
 
 function normalizeStatusPayload(payload = {}) {
-  // Accept multiple possible shapes from backend (defensive)
   const status = payload.status ?? payload.state ?? payload.upload_status ?? "unknown";
 
-  const processed = 
-    // common keys
+  const processed =
     payload.processed ??
     payload.processed_count ??
-    // older UI shape
     payload.processedEmails ??
     0;
 
@@ -37,11 +34,9 @@ function normalizeStatusPayload(payload = {}) {
     payload.chunk_count ??
     0;
 
-  // compute percent defensively
   const percent =
     total && total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
 
-  // pass through anything else user may want
   return { status, processed, total, chunks, percent, raw: payload };
 }
 
@@ -51,7 +46,6 @@ export default function Upload() {
   const [error, setError] = useState(null);
   const pollingRef = useRef(null);
 
-  // Fetch once immediately whenever uploadId is set or on manual refresh
   async function fetchOnce(id) {
     if (!id) return null;
     try {
@@ -67,9 +61,7 @@ export default function Upload() {
     }
   }
 
-  // Start/stop polling whenever uploadId changes or progress changes to finished.
   useEffect(() => {
-    // clear any existing poll
     if (pollingRef.current) {
       clearInterval(pollingRef.current);
       pollingRef.current = null;
@@ -82,10 +74,8 @@ export default function Upload() {
 
     let active = true;
 
-    // immediate fetch
     (async () => {
       const res = await fetchOnce(uploadId);
-      // if finished immediately, skip polling
       if (!res) return;
       if (["completed", "cancelled", "failed", "done"].includes(String(res.status).toLowerCase()) || res.percent >= 100) {
         active = false;
@@ -93,7 +83,6 @@ export default function Upload() {
       }
     })();
 
-    // else poll regularly
     pollingRef.current = setInterval(async () => {
       try {
         const res = await fetchOnce(uploadId);
@@ -101,12 +90,10 @@ export default function Upload() {
 
         const s = String(res.status).toLowerCase();
         if (["completed", "cancelled", "failed", "done"].includes(s) || res.percent >= 100) {
-          // reached terminal state -> stop polling
           clearInterval(pollingRef.current);
           pollingRef.current = null;
         }
       } catch (err) {
-        // keep polling but show error
         console.error("poll error", err);
         setError("Error polling status (see console)");
       }
@@ -122,12 +109,53 @@ export default function Upload() {
   }, [uploadId]);
 
   const onUploaded = (id, meta) => {
-    // FileUpload component should call onUploaded(id) on success.
     setUploadId(id);
-    // clear any prior errors/progress
     setError(null);
-    setProgress({ status: "queued", processed: 0, total: meta?.total ?? 0, chunks: meta?.chunks ?? 0, percent: 0 });
+    setProgress({
+      status: "queued",
+      processed: 0,
+      total: meta?.total ?? 0,
+      chunks: meta?.chunks ?? 0,
+      percent: 0
+    });
   };
+
+  // ------------------------------
+  // ⭐ NEW: Download Results Handler
+  // ------------------------------
+  const downloadResults = async () => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/uploads/${uploadId}/results/download`, {
+        method: "GET",
+      });
+
+      if (!res.ok) {
+        console.error("Download failed", res.status);
+        setError("Failed to download results");
+        return;
+      }
+
+      // Convert to blob
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+
+      // filename auto-hint
+      a.download = `results-${uploadId}.xlsx`;
+      a.click();
+
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("download error", err);
+      setError("Download failed");
+    }
+  };
+
+  const isCompleted =
+    progress &&
+    (progress.percent >= 100 ||
+      ["completed", "done"].includes(String(progress.status).toLowerCase()));
 
   return (
     <div className="p-6">
@@ -155,7 +183,7 @@ export default function Upload() {
 
             <div className="w-full bg-gray-200 rounded h-3 overflow-hidden">
               <div
-                className="h-3 rounded"
+                className="h-3 rounded bg-green-500"
                 style={{ width: `${progress.percent}%`, transition: "width 400ms ease" }}
                 aria-hidden
               />
@@ -166,7 +194,19 @@ export default function Upload() {
           <p><strong>Total:</strong> {progress.total}</p>
           <p><strong>Chunks:</strong> {progress.chunks}</p>
 
-          {progress.percent >= 100 && <p className="mt-2 text-green-700">Upload processing completed.</p>}
+          {isCompleted && (
+            <div className="mt-4">
+              <p className="text-green-700 mb-3">Upload processing completed.</p>
+
+              {/* ⭐ DOWNLOAD BUTTON */}
+              <button
+                onClick={downloadResults}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+              >
+                Download Results
+              </button>
+            </div>
+          )}
         </div>
       )}
 

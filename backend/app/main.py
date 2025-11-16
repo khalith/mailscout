@@ -1,4 +1,3 @@
-##backend/app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -15,7 +14,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "*",   # DEV ONLY — remove for production
+        "*",  # DEV ONLY — remove for production / replace with explicit origins
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -38,6 +37,6 @@ app.include_router(results.router, prefix="/results", tags=["results"])
 
 # ---------------------------------------------------
 # Note:
-# Don't use uvicorn.run() inside docker containers.
-# docker-compose already starts uvicorn via CMD in Dockerfile.
+# Don't run uvicorn.run() inside the container — your Dockerfile / compose should
+# start uvicorn as the container CMD/entrypoint.
 # ---------------------------------------------------

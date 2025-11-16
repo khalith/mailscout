@@ -65,3 +65,9 @@ async def wait_for_db(max_retries: int = 8, delay: float = 2.0):
 
     logger.error("Could not connect to database after %d retries: last error: %s", max_retries, last_exc)
     raise last_exc
+
+# ADD THIS to backend/app/db.py
+
+async def get_session():
+    async with AsyncSessionLocal() as session:
+        yield session

@@ -1,3 +1,4 @@
+// frontend/src/pages/Results.jsx
 import React from "react";
 import { useParams } from "react-router-dom";
 
