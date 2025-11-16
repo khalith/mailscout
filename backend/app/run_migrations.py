@@ -1,15 +1,20 @@
+# run_migrations.py (wraps alembic call with wait_for_db)
 import asyncio
+import logging
 from alembic import command
 from alembic.config import Config
-import os
+from app.db import wait_for_db
+from app.config import settings
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("run_migrations")
 
 async def run_migrations():
-    # Path to alembic.ini inside the container
-    config_path = os.path.join(os.path.dirname(__file__), "../alembic.ini")
-    alembic_cfg = Config(config_path)
+    # wait for DB (will raise if auth fails)
+    await wait_for_db(max_retries=8, delay=2.0)
 
-    # Run migrations
-    command.upgrade(alembic_cfg, "head")
+    cfg = Config("alembic.ini")
+    command.upgrade(cfg, "head")
 
 if __name__ == "__main__":
     asyncio.run(run_migrations())

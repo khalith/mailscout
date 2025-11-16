@@ -1,4 +1,5 @@
 import enum
+import sqlalchemy as sa
 from sqlalchemy import Column, Integer, String, DateTime, func
 from sqlalchemy.dialects.postgresql import ENUM
 from app.db import Base
@@ -30,7 +31,20 @@ class Upload(Base):
     processed_count = Column(Integer, default=0)
 
     # Use the real PostgreSQL ENUM
-    status = Column(upload_status_enum, nullable=False, default=UploadStatus.queued)
+    # status = Column(upload_status_enum, nullable=False, default=UploadStatus.queued)
+    status = sa.Column(
+        sa.Enum(
+            "queued",
+            "processing",
+            "completed",
+            "cancelled",
+            name="uploadstatus",
+            create_type=False,       # <-- critical fix
+            validate_strings=True
+        ),
+        nullable=False,
+    )
+
 
     meta = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

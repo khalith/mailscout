@@ -41,6 +41,7 @@ COPY alembic /app/alembic
 COPY alembic/alembic.ini /app/alembic.ini
 COPY app/run_migrations.py /app/run_migrations.py
 
+ENV PYTHONPATH="/app"
 EXPOSE 8000
 
 # Auto-run migrations, then start API
