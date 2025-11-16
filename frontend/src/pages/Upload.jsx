@@ -11,7 +11,7 @@ import { apiGet } from "../api";
  */
 
 const POLL_INTERVAL_ACTIVE = 2000; // ms when upload is active
-const POLL_INTERVAL_IDLE = 5000;   // ms when no uploadId or finished
+const POLL_INTERVAL_IDLE = 5000; // ms when no uploadId or finished
 
 function normalizeStatusPayload(payload = {}) {
   const status = payload.status ?? payload.state ?? payload.upload_status ?? "unknown";
@@ -44,6 +44,7 @@ export default function Upload() {
   const [uploadId, setUploadId] = useState(null);
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState(null);
+  const [format, setFormat] = useState("csv"); // <<< added: selected download format
   const pollingRef = useRef(null);
 
   async function fetchOnce(id) {
@@ -77,7 +78,10 @@ export default function Upload() {
     (async () => {
       const res = await fetchOnce(uploadId);
       if (!res) return;
-      if (["completed", "cancelled", "failed", "done"].includes(String(res.status).toLowerCase()) || res.percent >= 100) {
+      if (
+        ["completed", "cancelled", "failed", "done"].includes(String(res.status).toLowerCase()) ||
+        res.percent >= 100
+      ) {
         active = false;
         return;
       }
@@ -116,46 +120,39 @@ export default function Upload() {
       processed: 0,
       total: meta?.total ?? 0,
       chunks: meta?.chunks ?? 0,
-      percent: 0
+      percent: 0,
     });
   };
 
-  // ------------------------------
-  // ⭐ NEW: Download Results Handler
-  // ------------------------------
-  const downloadResults = async () => {
+  // updated: accept format param (defaults to csv)
+  const downloadResults = async (selectedFormat = "csv") => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/uploads/${uploadId}/results/download`, {
-        method: "GET",
-      });
+      const url = `${import.meta.env.VITE_API_URL}/results/download/${uploadId}?file_format=${selectedFormat}`;
+      const res = await fetch(url);
 
       if (!res.ok) {
         console.error("Download failed", res.status);
-        setError("Failed to download results");
+        setError("Download failed");
         return;
       }
 
-      // Convert to blob
       const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
+      const downloadUrl = window.URL.createObjectURL(blob);
+
       const a = document.createElement("a");
-      a.href = url;
-
-      // filename auto-hint
-      a.download = `results-${uploadId}.xlsx`;
+      a.href = downloadUrl;
+      a.download = `results_${uploadId}.${selectedFormat}`;
+      document.body.appendChild(a);
       a.click();
-
-      window.URL.revokeObjectURL(url);
+      a.remove();
     } catch (err) {
-      console.error("download error", err);
-      setError("Download failed");
+      console.error("Download error:", err);
     }
   };
 
   const isCompleted =
     progress &&
-    (progress.percent >= 100 ||
-      ["completed", "done"].includes(String(progress.status).toLowerCase()));
+    (progress.percent >= 100 || ["completed", "done"].includes(String(progress.status).toLowerCase()));
 
   return (
     <div className="p-6">
@@ -173,11 +170,15 @@ export default function Upload() {
         <div className="mt-6 bg-white p-5 rounded shadow max-w-xl">
           <h3 className="text-lg font-semibold mb-2">Progress</h3>
 
-          <p className="mb-2"><strong>Upload ID:</strong> <code>{uploadId}</code></p>
+          <p className="mb-2">
+            <strong>Upload ID:</strong> <code>{uploadId}</code>
+          </p>
 
           <div className="mb-3">
             <div className="flex items-center justify-between text-sm mb-1">
-              <div><strong>Status:</strong> {progress.status}</div>
+              <div>
+                <strong>Status:</strong> {progress.status}
+              </div>
               <div>{progress.percent}%</div>
             </div>
 
@@ -190,29 +191,45 @@ export default function Upload() {
             </div>
           </div>
 
-          <p><strong>Processed:</strong> {progress.processed}</p>
-          <p><strong>Total:</strong> {progress.total}</p>
-          <p><strong>Chunks:</strong> {progress.chunks}</p>
+          <p>
+            <strong>Processed:</strong> {progress.processed}
+          </p>
+          <p>
+            <strong>Total:</strong> {progress.total}
+          </p>
+          <p>
+            <strong>Chunks:</strong> {progress.chunks}
+          </p>
 
           {isCompleted && (
             <div className="mt-4">
               <p className="text-green-700 mb-3">Upload processing completed.</p>
 
-              {/* ⭐ DOWNLOAD BUTTON */}
-              <button
-                onClick={downloadResults}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-              >
-                Download Results
-              </button>
+              {/* NEW: Format selector + download button */}
+              <div className="flex items-center gap-3 mt-2">
+                <select
+                  value={format}
+                  onChange={(e) => setFormat(e.target.value)}
+                  className="border px-3 py-2 rounded"
+                >
+                  <option value="csv">CSV (.csv)</option>
+                  <option value="xlsx">XLSX (.xlsx)</option>
+                  <option value="txt">TXT (.txt)</option>
+                </select>
+
+                <button
+                  onClick={() => downloadResults(format)}
+                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                >
+                  Download Results
+                </button>
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {!uploadId && (
-        <div className="mt-6 text-sm text-gray-600">No upload in progress.</div>
-      )}
+      {!uploadId && <div className="mt-6 text-sm text-gray-600">No upload in progress.</div>}
     </div>
   );
 }
