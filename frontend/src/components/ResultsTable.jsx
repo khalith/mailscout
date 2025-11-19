@@ -1,10 +1,8 @@
 // frontend/src/components/ResultsTable.jsx
-
 import { useState } from "react";
 import { DOWNLOAD_RESULTS_API } from "../api";
 
-export default function ResultsTable({ uploadId, results }) {
-  // ⭐ ADD FORMAT STATE
+export default function ResultsTable({ uploadId, results = [] }) {
   const [format, setFormat] = useState("csv");
 
   const handleDownload = async () => {
@@ -12,7 +10,6 @@ export default function ResultsTable({ uploadId, results }) {
 
     try {
       const response = await fetch(url);
-
       if (!response.ok) {
         alert("Failed to download file");
         return;
@@ -35,8 +32,6 @@ export default function ResultsTable({ uploadId, results }) {
 
   return (
     <div className="w-full">
-
-      {/* ⭐ FORMAT DROPDOWN + DOWNLOAD BUTTON HERE */}
       <div className="flex items-center gap-3 mb-4">
         <select
           value={format}
@@ -44,7 +39,6 @@ export default function ResultsTable({ uploadId, results }) {
           className="px-3 py-2 border rounded-md bg-white"
         >
           <option value="csv">CSV (.csv)</option>
-          <option value="xlsx">Excel (.xlsx)</option>
           <option value="txt">Text (.txt)</option>
         </select>
 
@@ -56,7 +50,6 @@ export default function ResultsTable({ uploadId, results }) {
         </button>
       </div>
 
-      {/* Existing results table */}
       <table className="min-w-full border border-gray-200 rounded">
         <thead>
           <tr className="bg-gray-100">
@@ -69,8 +62,8 @@ export default function ResultsTable({ uploadId, results }) {
           </tr>
         </thead>
         <tbody>
-          {results.map((r) => (
-            <tr key={r.email} className="border">
+          {results.map((r, idx) => (
+            <tr key={r.email ?? idx} className="border">
               <td className="border px-4 py-2">{r.email}</td>
               <td className="border px-4 py-2">{r.normalized}</td>
               <td className="border px-4 py-2">{r.status}</td>
@@ -79,6 +72,13 @@ export default function ResultsTable({ uploadId, results }) {
               <td className="border px-4 py-2">{r.created_at}</td>
             </tr>
           ))}
+          {results.length === 0 && (
+            <tr>
+              <td colSpan={6} className="text-center p-4 text-gray-500">
+                No rows to display.
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>

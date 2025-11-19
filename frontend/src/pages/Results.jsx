@@ -12,25 +12,22 @@ export default function Results() {
   const [results, setResults] = useState([]);
   const [format, setFormat] = useState("csv");
 
-  // Fetch processing status & summary
   useEffect(() => {
     const fetchStatus = async () => {
       try {
         const res = await fetch(`${UPLOAD_STATUS_API}/${id}`);
+        if (!res.ok) {
+          console.error("Failed to fetch status", res.status);
+          setStatus("unknown");
+          return;
+        }
         const data = await res.json();
-
         setStatus(data.status || "unknown");
         setTotal(data.total || 0);
         setProcessed(data.processed || 0);
-
-        // If completed, fetch results table
-        if (data.status === "completed") {
-          const resultsRes = await fetch(`${DOWNLOAD_RESULTS_API}/${id}?file_format=json`);
-          const resultsJson = await resultsRes.json();
-          setResults(resultsJson.results || []);
-        }
       } catch (err) {
         console.error("Error fetching status:", err);
+        setStatus("unknown");
       }
     };
 
@@ -42,15 +39,12 @@ export default function Results() {
 
     try {
       const response = await fetch(url);
-
       if (!response.ok) {
         alert("Failed to download file");
         return;
       }
-
       const blob = await response.blob();
       const downloadUrl = window.URL.createObjectURL(blob);
-
       const link = document.createElement("a");
       link.href = downloadUrl;
       link.download = `results_${id}.${format}`;
@@ -69,7 +63,6 @@ export default function Results() {
         Results for Upload ID: <span className="text-blue-600">{id}</span>
       </h2>
 
-      {/* STATUS CARD */}
       <div className="border rounded-lg p-4 bg-white shadow mb-6">
         <p className="text-lg mb-1">
           <strong>Status:</strong>{" "}
@@ -78,21 +71,14 @@ export default function Results() {
           </span>
         </p>
 
-        <p>
-          <strong>Processed:</strong> {processed}
-        </p>
-        <p>
-          <strong>Total:</strong> {total}
-        </p>
+        <p><strong>Processed:</strong> {processed}</p>
+        <p><strong>Total:</strong> {total}</p>
 
         {status === "completed" && (
-          <p className="text-green-600 font-semibold mt-2">
-            Processing completed.
-          </p>
+          <p className="text-green-600 font-semibold mt-2">Processing completed.</p>
         )}
       </div>
 
-      {/* DOWNLOAD OPTIONS */}
       {status === "completed" && (
         <div className="border rounded-lg p-4 bg-white shadow mb-6">
           <h3 className="text-xl font-semibold mb-3">Download Results</h3>
@@ -104,7 +90,6 @@ export default function Results() {
               className="px-3 py-2 border rounded-md bg-white"
             >
               <option value="csv">CSV (.csv)</option>
-              <option value="xlsx">Excel (.xlsx)</option>
               <option value="txt">Text (.txt)</option>
             </select>
 
@@ -115,38 +100,6 @@ export default function Results() {
               Download
             </button>
           </div>
-        </div>
-      )}
-
-      {/* RESULTS TABLE */}
-      {status === "completed" && results.length > 0 && (
-        <div className="border rounded-lg p-4 bg-white shadow">
-          <h3 className="text-xl font-semibold mb-3">Preview (first 100 rows)</h3>
-
-          <table className="min-w-full border border-gray-300 rounded">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className="border px-3 py-2">Email</th>
-                <th className="border px-3 py-2">Normalized</th>
-                <th className="border px-3 py-2">Status</th>
-                <th className="border px-3 py-2">Score</th>
-                <th className="border px-3 py-2">Checks</th>
-                <th className="border px-3 py-2">Created</th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.slice(0, 100).map((r, idx) => (
-                <tr key={idx}>
-                  <td className="border px-3 py-2">{r.email}</td>
-                  <td className="border px-3 py-2">{r.normalized}</td>
-                  <td className="border px-3 py-2">{r.status}</td>
-                  <td className="border px-3 py-2">{r.score}</td>
-                  <td className="border px-3 py-2">{r.checks}</td>
-                  <td className="border px-3 py-2">{r.created_at}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       )}
     </div>

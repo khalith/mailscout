@@ -3,40 +3,18 @@ import React, { useState, useEffect, useRef } from "react";
 import FileUpload from "../components/FileUpload";
 import { apiGet } from "../api";
 
-/**
- * Robust Upload page
- * - polls backend for status
- * - tolerant to varied response keys (processed vs processed_count, total vs total_count)
- * - stops polling when finished
- */
-
-const POLL_INTERVAL_ACTIVE = 2000; // ms when upload is active
-const POLL_INTERVAL_IDLE = 5000; // ms when no uploadId or finished
+const POLL_INTERVAL_ACTIVE = 2000;
 
 function normalizeStatusPayload(payload = {}) {
   const status = payload.status ?? payload.state ?? payload.upload_status ?? "unknown";
-
   const processed =
-    payload.processed ??
-    payload.processed_count ??
-    payload.processedEmails ??
-    0;
-
+    payload.processed ?? payload.processed_count ?? payload.processedEmails ?? 0;
   const total =
-    payload.total ??
-    payload.total_count ??
-    payload.totalEmails ??
-    0;
-
+    payload.total ?? payload.total_count ?? payload.totalEmails ?? 0;
   const chunks =
-    payload.chunks ??
-    payload.total_chunks ??
-    payload.chunk_count ??
-    0;
-
+    payload.chunks ?? payload.total_chunks ?? payload.chunk_count ?? 0;
   const percent =
     total && total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
-
   return { status, processed, total, chunks, percent, raw: payload };
 }
 
@@ -44,7 +22,7 @@ export default function Upload() {
   const [uploadId, setUploadId] = useState(null);
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState(null);
-  const [format, setFormat] = useState("csv"); // <<< added: selected download format
+  const [format, setFormat] = useState("csv");
   const pollingRef = useRef(null);
 
   async function fetchOnce(id) {
@@ -73,42 +51,23 @@ export default function Upload() {
       return;
     }
 
-    let active = true;
-
     (async () => {
-      const res = await fetchOnce(uploadId);
-      if (!res) return;
-      if (
-        ["completed", "cancelled", "failed", "done"].includes(String(res.status).toLowerCase()) ||
-        res.percent >= 100
-      ) {
-        active = false;
-        return;
-      }
+      await fetchOnce(uploadId);
     })();
 
     pollingRef.current = setInterval(async () => {
-      try {
-        const res = await fetchOnce(uploadId);
-        if (!res) return;
-
-        const s = String(res.status).toLowerCase();
-        if (["completed", "cancelled", "failed", "done"].includes(s) || res.percent >= 100) {
-          clearInterval(pollingRef.current);
-          pollingRef.current = null;
-        }
-      } catch (err) {
-        console.error("poll error", err);
-        setError("Error polling status (see console)");
+      const res = await fetchOnce(uploadId);
+      if (!res) return;
+      const s = String(res.status).toLowerCase();
+      if (["completed", "cancelled", "failed", "done"].includes(s) || res.percent >= 100) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
       }
     }, POLL_INTERVAL_ACTIVE);
 
     return () => {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
-      }
-      active = false;
+      if (pollingRef.current) clearInterval(pollingRef.current);
+      pollingRef.current = null;
     };
   }, [uploadId]);
 
@@ -124,21 +83,17 @@ export default function Upload() {
     });
   };
 
-  // updated: accept format param (defaults to csv)
   const downloadResults = async (selectedFormat = "csv") => {
     try {
       const url = `${import.meta.env.VITE_API_URL}/results/download/${uploadId}?file_format=${selectedFormat}`;
       const res = await fetch(url);
-
       if (!res.ok) {
         console.error("Download failed", res.status);
         setError("Download failed");
         return;
       }
-
       const blob = await res.blob();
       const downloadUrl = window.URL.createObjectURL(blob);
-
       const a = document.createElement("a");
       a.href = downloadUrl;
       a.download = `results_${uploadId}.${selectedFormat}`;
@@ -147,6 +102,7 @@ export default function Upload() {
       a.remove();
     } catch (err) {
       console.error("Download error:", err);
+      setError("Download error");
     }
   };
 
@@ -191,21 +147,14 @@ export default function Upload() {
             </div>
           </div>
 
-          <p>
-            <strong>Processed:</strong> {progress.processed}
-          </p>
-          <p>
-            <strong>Total:</strong> {progress.total}
-          </p>
-          <p>
-            <strong>Chunks:</strong> {progress.chunks}
-          </p>
+          <p><strong>Processed:</strong> {progress.processed}</p>
+          <p><strong>Total:</strong> {progress.total}</p>
+          <p><strong>Chunks:</strong> {progress.chunks}</p>
 
           {isCompleted && (
             <div className="mt-4">
               <p className="text-green-700 mb-3">Upload processing completed.</p>
 
-              {/* NEW: Format selector + download button */}
               <div className="flex items-center gap-3 mt-2">
                 <select
                   value={format}
@@ -213,7 +162,6 @@ export default function Upload() {
                   className="border px-3 py-2 rounded"
                 >
                   <option value="csv">CSV (.csv)</option>
-                  <option value="xlsx">XLSX (.xlsx)</option>
                   <option value="txt">TXT (.txt)</option>
                 </select>
 
