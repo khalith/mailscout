@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import FileUpload from "../components/FileUpload";
 import { apiGet } from "../api";
+import { DOWNLOAD_RESULTS_API } from "../api";
 
 const POLL_INTERVAL_ACTIVE = 2000;
 
@@ -85,7 +86,7 @@ export default function Upload() {
 
   const downloadResults = async (selectedFormat = "csv") => {
     try {
-      const url = `${import.meta.env.VITE_API_URL}/results/download/${uploadId}?file_format=${selectedFormat}`;
+      const url = `${DOWNLOAD_RESULTS_API}/${uploadId}?file_format=${selectedFormat}`;
       const res = await fetch(url);
       if (!res.ok) {
         console.error("Download failed", res.status);
