@@ -1,103 +1,171 @@
 # worker/worker.py
+
 import asyncio
 import json
 import logging
-import os
+import re
+import dns.resolver
 import asyncpg
+import redis.asyncio as redis
 from typing import List
 
-import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from app.config import settings
 from app.models.upload import Upload, UploadStatus
 from app.models.email_result import EmailResult
-from app.db import Base
 
-LOG = logging.getLogger("mailscout-worker")
+# ---------------------------------------------------------
+# logging — FIXED (your old version was corrupted)
+# ---------------------------------------------------------
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
-    format="%(asctime)s %(levelname)s %(mes₹ge)s"
+    format="%(asctime)s %(levelname)s %(message)s",
 )
 
-# --------------------------------------------------------------------
-# FIX 1 — SQLAlchemy engine can use DATABASE_URL exactly as-is
-# --------------------------------------------------------------------
-engine = create_async_engine(
-    settings.DATABASE_URL,   # do not modify
-    echo=False,
-    future=True
-)
+LOG = logging.getLogger("mailscout-worker")
 
+# ---------------------------------------------------------
+# SQLAlchemy engine
+# ---------------------------------------------------------
+engine = create_async_engine(settings.DATABASE_URL, future=True, echo=False)
 AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
+# ---------------------------------------------------------
+# Email syntax check
+# ---------------------------------------------------------
+EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-# --------------------------------------------------------------------
-# FIX 2 — asyncpg must use a pure postgres:// URL
-# --------------------------------------------------------------------
-def get_asyncpg_url():
-    # SQLAlchemy style URL → asyncpg compatible URL
-    return settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+def is_syntax_valid(email: str) -> bool:
+    return EMAIL_REGEX.match(email) is not None
 
+# ---------------------------------------------------------
+# MX lookup
+# ---------------------------------------------------------
+def check_mx(domain: str):
+    try:
+        answers = dns.resolver.resolve(domain, "MX")
+        mx_hosts = sorted([str(r.exchange).rstrip('.') for r in answers])
+        return mx_hosts
+    except Exception:
+        return []
 
+# ---------------------------------------------------------
+# Score logic
+# ---------------------------------------------------------
+def compute_score(is_valid, has_mx):
+    if not is_valid:
+        return 0
+    if is_valid and not has_mx:
+        return 30
+    if is_valid and has_mx:
+        return 90
+    return 0
+
+# ---------------------------------------------------------
+# Status mapping
+# ---------------------------------------------------------
+def compute_status(is_valid, has_mx):
+    if not is_valid:
+        return "invalid"
+    if is_valid and not has_mx:
+        return "risky"
+    return "valid"
+
+# ---------------------------------------------------------
+# Process payload batch
+# ---------------------------------------------------------
 async def process_payload(payload: dict, db: AsyncSession):
     upload_id = payload.get("upload_id")
     emails: List[str] = payload.get("emails") or []
+
     if not upload_id or not emails:
         LOG.warning("Invalid payload: %s", payload)
         return
 
+    # Load upload object
     q = await db.execute(select(Upload).where(Upload.id == upload_id))
     upload_obj = q.scalars().first()
     if not upload_obj:
-        LOG.error("Upload not found for id=%s", upload_id)
+        LOG.error("Upload not found: %s", upload_id)
         return
 
+    # Set upload to processing
     if upload_obj.status == UploadStatus.queued:
         upload_obj.status = UploadStatus.processing
 
     inserted = 0
+
     for email in emails:
+        normalized = email.lower().strip()
+
+        # Skip duplicates
         q2 = await db.execute(
             select(EmailResult).where(
                 EmailResult.upload_id == upload_id,
-                EmailResult.email == email
+                EmailResult.email == normalized,
             )
         )
         if q2.scalars().first():
             continue
 
+        # 1. Syntax check
+        is_valid = is_syntax_valid(normalized)
+
+        # 2. MX lookup
+        domain = normalized.split("@")[-1]
+        mx_records = check_mx(domain)
+        has_mx = len(mx_records) > 0
+
+        # 3. Score + status
+        score = compute_score(is_valid, has_mx)
+        status = compute_status(is_valid, has_mx)
+
+        # 4. Save checks JSON
+        checks = {
+            "syntax": is_valid,
+            "domain": domain,
+            "mx_records": mx_records,
+            "has_mx": has_mx,
+        }
+
+        # Insert result
         r = EmailResult(
             upload_id=upload_id,
-            email=email,
-            normalized=email.lower().strip(),
-            status="pending",
-            score=0,
-            checks={},
+            email=normalized,
+            normalized=normalized,
+            status=status,
+            score=score,
+            checks=checks,
         )
         db.add(r)
         inserted += 1
 
+    # Update progress
     upload_obj.processed_count = (upload_obj.processed_count or 0) + inserted
 
     if upload_obj.total_count and upload_obj.processed_count >= upload_obj.total_count:
         upload_obj.status = UploadStatus.completed
 
     await db.commit()
+
     LOG.info(
-        "Processed payload for upload=%s inserted=%d processed_count=%d total=%d",
+        "Processed payload for upload=%s inserted=%d processed=%d total=%d",
         upload_id,
         inserted,
-        upload_obj.processed_count or 0,
-        upload_obj.total_count or 0
+        upload_obj.processed_count,
+        upload_obj.total_count,
     )
 
 
+# ---------------------------------------------------------
+# Worker loop
+# ---------------------------------------------------------
 async def worker_loop():
     r = redis.from_url(settings.REDIS_URL, decode_responses=True)
-    LOG.info("Worker connected to Redis: %s queue=%s", settings.REDIS_URL, settings.QUEUE_KEY)
+    LOG.info("Worker connected to Redis: %s", settings.REDIS_URL)
 
     try:
         while True:
@@ -108,18 +176,14 @@ async def worker_loop():
                     continue
 
                 _, raw = res
-                try:
-                    payload = json.loads(raw)
-                except Exception:
-                    LOG.exception("Invalid JSON payload popped: %s", raw)
-                    continue
+                payload = json.loads(raw)
 
                 async with AsyncSessionLocal() as db:
                     await process_payload(payload, db)
 
             except Exception:
-                LOG.exception("Unhandled error in worker iteration")
-                await asyncio.sleep(1.0)
+                LOG.exception("Error in worker loop")
+                await asyncio.sleep(1)
 
     finally:
         await r.close()
@@ -130,12 +194,7 @@ async def worker_loop():
 def main():
     LOG.info("Starting mailscout worker")
     loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(worker_loop())
-    except (KeyboardInterrupt, SystemExit):
-        LOG.info("Worker received exit signal")
-    finally:
-        LOG.info("Worker done")
+    loop.run_until_complete(worker_loop())
 
 
 if __name__ == "__main__":

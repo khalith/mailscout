@@ -93,7 +93,7 @@ def parse_xls(content: bytes):
 @router.post("/create")
 async def create_upload(
     file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = None,
+    background_tasks: BackgroundTasks = Depends(),
     db: AsyncSession = Depends(get_db),
 ):
     fname = file.filename.lower()
