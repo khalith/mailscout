@@ -1,12 +1,11 @@
 # worker/verifier/disposable.py
-
-DISPOSABLE_DOMAINS = {
-    "mailinator.com",
-    "tempmail.com",
-    "10minutemail.com",
-    "trashmail.com",
-    "yopmail.com"
+# Minimal disposable provider list (extendable dynamic list recommended)
+DISPOSABLE_PROVIDERS = {
+    "mailinator.com", "10minutemail.com", "tempmail.com", "trashmail.com",
+    "guerrillamail.com", "yopmail.com", "dispostable.com",
 }
 
 def is_disposable(domain: str) -> bool:
-    return domain.lower() in DISPOSABLE_DOMAINS
+    if not domain:
+        return False
+    return domain.lower() in DISPOSABLE_PROVIDERS

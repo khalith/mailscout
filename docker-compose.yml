@@ -50,6 +50,9 @@ services:
       - QUEUE_KEY=mailscout:jobs
       - CONCURRENCY=100
       - PER_MX_LIMIT=5
+      - WORKER_SMTP=true
+      - MX_CONCURRENCY=6
+      - BATCH_INSERT=200
     depends_on:
       - postgres
       - redis
