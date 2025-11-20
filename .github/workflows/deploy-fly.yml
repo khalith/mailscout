@@ -49,7 +49,7 @@ jobs:
           UPLOAD_PATH="/data/uploads" \
           -a mailscout-backend
       env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_BACKEND }}
 
     # ======================================
     # SET WORKER SECRETS
@@ -66,7 +66,7 @@ jobs:
           BATCH_INSERT="${{ vars.BATCH_INSERT }}" \
           -a mailscout-worker
       env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_WORKER }}
 
     # ======================================
     # SET AUTOSCALER SECRETS
@@ -83,7 +83,7 @@ jobs:
           INTERVAL="${{ vars.INTERVAL }}" \
           -a mailscout-autoscaler
       env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_AUTOSCALER }}
 
     # ======================================
     # SET FRONTEND SECRETS
@@ -94,7 +94,7 @@ jobs:
           VITE_API_URL="${{ vars.VITE_API_URL }}" \
           -a mailscout-frontend
       env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_FRONTEND }}
 
     # ======================================
     # DEPLOY APPLICATIONS
@@ -109,7 +109,7 @@ jobs:
           --detach \
           -a mailscout-backend
       env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_BACKEND }}
 
     # WORKER DEPLOY
     - name: Deploy worker
@@ -120,7 +120,7 @@ jobs:
           --detach \
           -a mailscout-worker
       env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_WORKER }}
 
     # AUTOSCALER DEPLOY
     - name: Deploy autoscaler
@@ -131,7 +131,7 @@ jobs:
           --detach \
           -a mailscout-autoscaler
       env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_AUTOSCALER }}
 
     # FRONTEND DEPLOY
     - name: Deploy frontend
@@ -142,4 +142,4 @@ jobs:
           --detach \
           -a mailscout-frontend
       env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_FRONTEND }}
