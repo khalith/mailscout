@@ -8,28 +8,26 @@ kill_timeout = 5
 
 [env]
   QUEUE_KEY = "mailscout:jobs"
-  CONCURRENCY = "100"       # per-instance concurrency
+  CONCURRENCY = "100"
   PER_MX_LIMIT = "5"
   INSERT_BATCH_SIZE = "200"
 
 [experimental]
   auto_rollback = true
 
-# Worker has no HTTP ports — it's a background service.
+# ---------------------------------------------------------
+# Workers normally don't expose ports — but Fly requires
+# at least one service block, so we keep a minimal TCP port.
+# ---------------------------------------------------------
 [[services]]
   internal_port = 9000
   protocol = "tcp"
 
-  # We do not expose HTTP; but we keep a TCP healthcheck port if needed.
   [[services.ports]]
     port = 9000
 
   [services.tcp_checks]
-    grace_period = "10s"
     interval = "20s"
     timeout = "3s"
-    port = 9000
+    grace_period = "10s"
     restart_limit = 0
-
-# Recommended scale (manual or via autoscaler)
-# You can configure desired count via Fly CLI: `fly scale count N -a mailscout-worker`

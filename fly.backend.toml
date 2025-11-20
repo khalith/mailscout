@@ -2,14 +2,11 @@
 app = "mailscout-backend"
 kill_signal = "SIGINT"
 kill_timeout = 5
-processes = []
 
 [build]
   builder = "heroku/buildpacks:20"
 
 [env]
-  # Runtime config that will be injected from fly secrets in production.
-  # Keep minimal values here; set real values with `fly secrets set`.
   QUEUE_KEY = "mailscout:jobs"
   UPLOAD_PATH = "/data/uploads"
   CHUNK_SIZE = "1000"
@@ -17,14 +14,24 @@ processes = []
 [experimental]
   auto_rollback = true
 
+# ---------------------------
+# VOLUME (MANDATORY FOR UPLOADS)
+# ---------------------------
+[mounts]
+  source = "uploads"
+  destination = "/data"
+
+# ---------------------------
+# SERVICES
+# ---------------------------
 [[services]]
   internal_port = 8000
   protocol = "tcp"
 
   [services.concurrency]
+    type = "connections"
     hard_limit = 25
     soft_limit = 20
-    type = "connections"
 
   [[services.ports]]
     handlers = ["http"]
@@ -35,10 +42,9 @@ processes = []
     port = 443
 
   [[services.tcp_checks]]
-    grace_period = "10s"
     interval = "15s"
     timeout = "2s"
-    port = 8000
+    grace_period = "10s"
     restart_limit = 0
 
 [deploy]

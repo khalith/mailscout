@@ -1,0 +1,31 @@
+# fly.frontend.toml
+app = "mailscout-frontend"
+kill_signal = "SIGINT"
+kill_timeout = 5
+
+[build]
+  # Use the Node builder for Vite builds
+  builder = "heroku/buildpacks:20"
+
+[env]
+  # IMPORTANT: Set your production backend API URL here
+  VITE_API_URL = "https://mailscout-backend.fly.dev"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  # Fly static + SPA-friendly serving
+  [[services.tcp_checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "5s"
+    restart_limit = 0
