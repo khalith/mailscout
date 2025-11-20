@@ -11,6 +11,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: actor
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}   # ✅ Global export
 
     steps:
     # ---------------------------------------
@@ -37,6 +39,12 @@ jobs:
     - name: Install Flyctl
       uses: superfly/flyctl-actions/setup-flyctl@v1
 
+    # ---------------------------------------
+    # VERIFY AUTH
+    # ---------------------------------------
+    - name: Verify Flyctl auth
+      run: flyctl auth whoami
+
     # ======================================
     # SET BACKEND SECRETS
     # ======================================
@@ -49,8 +57,6 @@ jobs:
           CHUNK_SIZE="${{ vars.CHUNK_SIZE }}" \
           UPLOAD_PATH="/data/uploads" \
           -a mailscout-backend
-      env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
     # ======================================
     # SET WORKER SECRETS
@@ -66,8 +72,6 @@ jobs:
           MX_CONCURRENCY="${{ vars.MX_CONCURRENCY }}" \
           BATCH_INSERT="${{ vars.BATCH_INSERT }}" \
           -a mailscout-worker
-      env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
     # ======================================
     # SET AUTOSCALER SECRETS
@@ -83,8 +87,6 @@ jobs:
           SCALE_DOWN_THRESHOLD="${{ vars.SCALE_DOWN_THRESHOLD }}" \
           INTERVAL="${{ vars.INTERVAL }}" \
           -a mailscout-autoscaler
-      env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
     # ======================================
     # SET FRONTEND SECRETS
@@ -94,8 +96,6 @@ jobs:
         flyctl secrets set \
           VITE_API_URL="${{ vars.VITE_API_URL }}" \
           -a mailscout-frontend
-      env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
     # ======================================
     # DEPLOY APPLICATIONS
@@ -109,8 +109,6 @@ jobs:
           --image ghcr.io/khalith/mailscout-backend:${{ github.ref_name }} \
           --detach \
           -a mailscout-backend
-      env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
     # WORKER DEPLOY
     - name: Deploy worker
@@ -120,8 +118,6 @@ jobs:
           --image ghcr.io/khalith/mailscout-worker:${{ github.ref_name }} \
           --detach \
           -a mailscout-worker
-      env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
     # AUTOSCALER DEPLOY
     - name: Deploy autoscaler
@@ -131,8 +127,6 @@ jobs:
           --image ghcr.io/khalith/mailscout-autoscaler:${{ github.ref_name }} \
           --detach \
           -a mailscout-autoscaler
-      env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
     # FRONTEND DEPLOY
     - name: Deploy frontend
@@ -142,5 +136,3 @@ jobs:
           --image ghcr.io/khalith/mailscout-frontend:${{ github.ref_name }} \
           --detach \
           -a mailscout-frontend
-      env:
-        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
