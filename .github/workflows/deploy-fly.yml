@@ -23,10 +23,9 @@ jobs:
       with:
         ref: main         # ✅ Ensures you're on a real branch
 
-    - name: Get Latest Tag
-      id: latest-tag
-      run: |
-        tag=$(git describe --tags `git rev-list --tags --max-count=1`)
+    - name: Get latest tag
+      id: get_tag
+      run: echo "LAST_TAG=$(git describe --tags --abbrev=0)" >> $GITHUB_OUTPUT
 
     # ---------------------------------------
     # LOGIN TO GHCR
@@ -70,7 +69,7 @@ jobs:
       run: |
         flyctl deploy \
           --config backend/fly.backend.toml \
-          --image ghcr.io/khalith/mailscout-backend:${{ steps.latest-tag.tag }} \
+          --image ghcr.io/khalith/mailscout-backend:${{ steps.get_tag.outputs.LAST_TAG }} \
           --detach \
           -a mailscout-backend
 
@@ -79,7 +78,7 @@ jobs:
       run: |
         flyctl deploy \
           --config worker/fly.worker.toml \
-          --image ghcr.io/khalith/mailscout-worker:${{ steps.latest-tag.tag }} \
+          --image ghcr.io/khalith/mailscout-worker:${{ steps.get_tag.outputs.LAST_TAG }} \
           --detach \
           -a mailscout-worker
 
@@ -88,7 +87,7 @@ jobs:
       run: |
         flyctl deploy \
           --config autoscaler/fly.autoscaler.toml \
-          --image ghcr.io/khalith/mailscout-autoscaler:${{ steps.latest-tag.tag }} \
+          --image ghcr.io/khalith/mailscout-autoscaler:${{ steps.get_tag.outputs.LAST_TAG }} \
           --detach \
           -a mailscout-autoscaler
 
@@ -97,7 +96,7 @@ jobs:
       run: |
         flyctl deploy \
           --config frontend/fly.frontend.toml \
-          --image ghcr.io/khalith/mailscout-frontend:${{ steps.latest-tag.tag }} \
+          --image ghcr.io/khalith/mailscout-frontend:${{ steps.get_tag.outputs.LAST_TAG }} \
           --detach \
           -a mailscout-frontend
 
