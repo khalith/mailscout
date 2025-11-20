@@ -1,7 +1,6 @@
-# backend/app/routers/results.py
 from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 import io
 import csv
 
@@ -18,14 +17,21 @@ async def download_results(
     file_format: str = Query("csv", regex="^(csv|txt)$"),
     session: AsyncSession = Depends(get_session),
 ):
-    # validate upload
+    # Validate upload exists
     upload = await session.get(Upload, upload_id)
     if not upload:
         raise HTTPException(404, "Upload not found")
-    if upload.status != "completed":
+
+    # --- FIX: Determine completion by counting results ---
+    q = await session.execute(
+        select(func.count()).select_from(EmailResult).where(EmailResult.upload_id == upload_id)
+    )
+    result_count = q.scalar_one() or 0
+
+    if result_count < (upload.total_count or 0):
         raise HTTPException(400, "Upload not yet completed")
 
-    # fetch results
+    # Fetch all results
     results = (
         await session.execute(
             select(EmailResult).where(EmailResult.upload_id == upload_id)
@@ -40,12 +46,19 @@ async def download_results(
         writer = csv.writer(buf)
         writer.writerow(headers)
         for r in results:
-            writer.writerow([r.email, r.normalized, r.status, r.score, r.checks, r.created_at])
+            writer.writerow([
+                r.email,
+                r.normalized,
+                r.status,
+                r.score,
+                r.checks,
+                r.created_at,
+            ])
         payload = ("\ufeff" + buf.getvalue()).encode("utf-8")
         return Response(
             payload,
             media_type="text/csv",
-            headers={"Content-Disposition": f'attachment; filename="results_{upload_id}.csv"'}
+            headers={"Content-Disposition": f'attachment; filename=\"results_{upload_id}.csv\"'}
         )
 
     # TXT
@@ -53,12 +66,14 @@ async def download_results(
         buf = io.StringIO()
         buf.write("\t".join(headers) + "\n")
         for r in results:
-            buf.write(f"{r.email}\t{r.normalized}\t{r.status}\t{r.score}\t{r.checks}\t{r.created_at}\n")
+            buf.write(
+                f"{r.email}\t{r.normalized}\t{r.status}\t{r.score}\t{r.checks}\t{r.created_at}\n"
+            )
         payload = buf.getvalue().encode("utf-8")
         return Response(
             payload,
             media_type="text/plain",
-            headers={"Content-Disposition": f'attachment; filename="results_{upload_id}.txt"'}
+            headers={"Content-Disposition": f'attachment; filename=\"results_{upload_id}.txt\"'}
         )
 
     raise HTTPException(400, "Unsupported file format")

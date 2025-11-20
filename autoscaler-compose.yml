@@ -1,0 +1,21 @@
+services:
+  autoscaler:
+    image: mailscout/autoscaler
+    container_name: mailscout-autoscaler
+    restart: unless-stopped
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - QUEUE_KEY=mailscout:jobs
+      - FLY_WORKER_APP=local-worker
+      - MIN_WORKERS=1
+      - MAX_WORKERS=1000
+      - SCALE_UP_THRESHOLD=1
+      - SCALE_DOWN_THRESHOLD=10
+      - IDLE_CHECKS_BEFORE_SCALE_DOWN=10
+      - INTERVAL=5
+      - COMPOSE_PROJECT=mailscout
+      - COMPOSE_FILE=/compose/docker-compose.yml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker-compose.yml:/compose/docker-compose.yml
+    # autoscaler must not be part of the mailscout stack → prevents recursive recreation

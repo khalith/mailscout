@@ -31,7 +31,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - QUEUE_KEY=mailscout:jobs
       - UPLOAD_PATH=/data/uploads
-      - CHUNK_SIZE=1000
+      - CHUNK_SIZE=400
     depends_on:
       - postgres
       - redis
@@ -42,7 +42,6 @@ services:
 
   worker:
     image: mailscout/worker
-    container_name: mailscout-worker
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/mailscout
@@ -64,23 +63,7 @@ services:
     ports:
       - "5173:5173"
     environment:
-      - VITE_API_URL=http://localhost:8000
-
-  autoscaler:
-    image: mailscout/autoscaler
-    container_name: mailscout-autoscaler
-    restart: unless-stopped
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-      - QUEUE_KEY=mailscout:jobs
-      - FLY_WORKER_APP=local-worker
-      - MIN_WORKERS=1
-      - MAX_WORKERS=10
-      - SCALE_UP_THRESHOLD=2000
-      - SCALE_DOWN_THRESHOLD=200
-      - INTERVAL=10
-    depends_on:
-      - redis
+      VITE_API_URL: http://localhost:8000
 
 volumes:
   pgdata:

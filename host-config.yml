@@ -1,0 +1,148 @@
+name: mailscout
+services:
+  autoscaler:
+    container_name: mailscout-autoscaler
+    depends_on:
+      redis:
+        condition: service_started
+        required: true
+    environment:
+      COMPOSE_FILE: /compose/docker-compose.yml
+      COMPOSE_PROJECT: mailscout
+      FLY_WORKER_APP: local-worker
+      INTERVAL: "5"
+      MAX_WORKERS: "1000"
+      MIN_WORKERS: "1"
+      QUEUE_KEY: mailscout:jobs
+      REDIS_URL: redis://redis:6379/0
+      SCALE_DOWN_THRESHOLD: "0"
+      SCALE_UP_THRESHOLD: "1"
+    image: mailscout/autoscaler
+    networks:
+      default: null
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /Users/khalithahmedc/Documents/mailscout
+        target: /compose
+        bind:
+          create_host_path: true
+  backend:
+    container_name: mailscout-backend
+    depends_on:
+      postgres:
+        condition: service_started
+        required: true
+      redis:
+        condition: service_started
+        required: true
+    environment:
+      CHUNK_SIZE: "400"
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/mailscout
+      QUEUE_KEY: mailscout:jobs
+      REDIS_URL: redis://redis:6379/0
+      UPLOAD_PATH: /data/uploads
+    image: mailscout/backend
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 8000
+        published: "8000"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: backend_uploads
+        target: /data/uploads
+        volume: {}
+  frontend:
+    container_name: mailscout-frontend
+    environment:
+      VITE_API_URL: http://localhost:8000
+    image: mailscout/frontend
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 5173
+        published: "5173"
+        protocol: tcp
+    restart: unless-stopped
+  postgres:
+    container_name: mailscout-postgres
+    environment:
+      POSTGRES_DB: mailscout
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    image: postgres:15
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 5432
+        published: "5432"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: pgdata
+        target: /var/lib/postgresql/data
+        volume: {}
+  redis:
+    container_name: mailscout-redis
+    image: redis:7
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 6379
+        published: "6379"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: redis-data
+        target: /data
+        volume: {}
+  worker:
+    depends_on:
+      postgres:
+        condition: service_started
+        required: true
+      redis:
+        condition: service_started
+        required: true
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: any
+    environment:
+      BATCH_INSERT: "200"
+      CONCURRENCY: "100"
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/mailscout
+      MX_CONCURRENCY: "6"
+      PER_MX_LIMIT: "5"
+      QUEUE_KEY: mailscout:jobs
+      REDIS_URL: redis://redis:6379/0
+      WORKER_SMTP: "true"
+    image: mailscout/worker
+    networks:
+      default: null
+    restart: unless-stopped
+networks:
+  default:
+    name: mailscout_default
+volumes:
+  backend_uploads:
+    name: mailscout_backend_uploads
+  pgdata:
+    name: mailscout_pgdata
+  redis-data:
+    name: mailscout_redis-data
