@@ -26,7 +26,7 @@ jobs:
     - name: Get Latest Tag
       id: latest-tag
       run: |
-        latest_tag=$(git describe --tags `git rev-list --tags --max-count=1`)
+        echo "tag=$(git describe --tags `git rev-list --tags --max-count=1`)" >> $GITHUB_OUTPUT
 
     # ---------------------------------------
     # LOGIN TO GHCR
@@ -70,7 +70,7 @@ jobs:
       run: |
         flyctl deploy \
           --config backend/fly.backend.toml \
-          --image ghcr.io/khalith/mailscout-backend:${{ latest_tag }} \
+          --image ghcr.io/khalith/mailscout-backend:${{ steps.latest-tag.outputs.tag }} \
           --detach \
           -a mailscout-backend
 
@@ -79,7 +79,7 @@ jobs:
       run: |
         flyctl deploy \
           --config worker/fly.worker.toml \
-          --image ghcr.io/khalith/mailscout-worker:${{ latest_tag }} \
+          --image ghcr.io/khalith/mailscout-worker:${{ steps.latest-tag.outputs.tag }} \
           --detach \
           -a mailscout-worker
 
@@ -88,7 +88,7 @@ jobs:
       run: |
         flyctl deploy \
           --config autoscaler/fly.autoscaler.toml \
-          --image ghcr.io/khalith/mailscout-autoscaler:${{ latest_tag }} \
+          --image ghcr.io/khalith/mailscout-autoscaler:${{ steps.latest-tag.outputs.tag }} \
           --detach \
           -a mailscout-autoscaler
 
@@ -97,7 +97,7 @@ jobs:
       run: |
         flyctl deploy \
           --config frontend/fly.frontend.toml \
-          --image ghcr.io/khalith/mailscout-frontend:${{ latest_tag }} \
+          --image ghcr.io/khalith/mailscout-frontend:${{ steps.latest-tag.outputs.tag }} \
           --detach \
           -a mailscout-frontend
 
