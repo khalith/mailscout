@@ -15,7 +15,6 @@ jobs:
       uses: actions/checkout@v4
       with:
         ref: main         # ✅ Ensures you're on a real branch
-        fetch-depth: 0    # ✅ Required for commit + push
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
