@@ -46,6 +46,57 @@ jobs:
       run: flyctl auth whoami
 
     # ======================================
+    # ENSURE VOLUME EXIST
+    # ======================================
+    - name: Ensure backend volume exists
+      run: |
+        flyctl volumes create uploads \
+          --size 1 \
+          --region bom \
+          -a mailscout-backend \
+          --yes || true
+
+    # ======================================
+    # DEPLOY APPLICATIONS
+    # ======================================
+
+    # BACKEND DEPLOY
+    - name: Deploy backend
+      run: |
+        flyctl deploy \
+          --config backend/fly.backend.toml \
+          --image ghcr.io/khalith/mailscout-backend:${{ github.ref_name }} \
+          --detach \
+          -a mailscout-backend
+
+    # WORKER DEPLOY
+    - name: Deploy worker
+      run: |
+        flyctl deploy \
+          --config worker/fly.worker.toml \
+          --image ghcr.io/khalith/mailscout-worker:${{ github.ref_name }} \
+          --detach \
+          -a mailscout-worker
+
+    # AUTOSCALER DEPLOY
+    - name: Deploy autoscaler
+      run: |
+        flyctl deploy \
+          --config autoscaler/fly.autoscaler.toml \
+          --image ghcr.io/khalith/mailscout-autoscaler:${{ github.ref_name }} \
+          --detach \
+          -a mailscout-autoscaler
+
+    # FRONTEND DEPLOY
+    - name: Deploy frontend
+      run: |
+        flyctl deploy \
+          --config frontend/fly.frontend.toml \
+          --image ghcr.io/khalith/mailscout-frontend:${{ github.ref_name }} \
+          --detach \
+          -a mailscout-frontend
+
+    # ======================================
     # SET BACKEND SECRETS
     # ======================================
     - name: Set backend secrets
@@ -95,44 +146,4 @@ jobs:
       run: |
         flyctl secrets set \
           VITE_API_URL="${{ vars.VITE_API_URL }}" \
-          -a mailscout-frontend
-
-    # ======================================
-    # DEPLOY APPLICATIONS
-    # ======================================
-
-    # BACKEND DEPLOY
-    - name: Deploy backend
-      run: |
-        flyctl deploy \
-          --config backend/fly.backend.toml \
-          --image ghcr.io/khalith/mailscout-backend:${{ github.ref_name }} \
-          --detach \
-          -a mailscout-backend
-
-    # WORKER DEPLOY
-    - name: Deploy worker
-      run: |
-        flyctl deploy \
-          --config worker/fly.worker.toml \
-          --image ghcr.io/khalith/mailscout-worker:${{ github.ref_name }} \
-          --detach \
-          -a mailscout-worker
-
-    # AUTOSCALER DEPLOY
-    - name: Deploy autoscaler
-      run: |
-        flyctl deploy \
-          --config autoscaler/fly.autoscaler.toml \
-          --image ghcr.io/khalith/mailscout-autoscaler:${{ github.ref_name }} \
-          --detach \
-          -a mailscout-autoscaler
-
-    # FRONTEND DEPLOY
-    - name: Deploy frontend
-      run: |
-        flyctl deploy \
-          --config frontend/fly.frontend.toml \
-          --image ghcr.io/khalith/mailscout-frontend:${{ github.ref_name }} \
-          --detach \
           -a mailscout-frontend
