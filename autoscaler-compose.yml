@@ -10,8 +10,8 @@ services:
       - MIN_WORKERS=1
       - MAX_WORKERS=1000
       - SCALE_UP_THRESHOLD=1
-      - SCALE_DOWN_THRESHOLD=10
-      - IDLE_CHECKS_BEFORE_SCALE_DOWN=10
+      - SCALE_DOWN_THRESHOLD=20
+      - IDLE_CHECKS_BEFORE_SCALE_DOWN=20
       - INTERVAL=5
       - COMPOSE_PROJECT=mailscout
       - COMPOSE_FILE=/compose/docker-compose.yml

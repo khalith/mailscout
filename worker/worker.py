@@ -15,6 +15,7 @@ import sys
 import inspect
 from pathlib import Path
 from typing import List, Optional, Tuple, Any, Dict
+from sqlalchemy import update, select
 
 # Ensure /worker and backend app are importable
 WORKER_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -305,16 +306,41 @@ async def process_payload(payload: dict, db: AsyncSession):
             except Exception:
                 LOG.exception("Error inserting email result for %s", item.get("email"))
 
-    # Update counters and status and commit
+    # Update counters and status atomically and commit
     try:
-        upload_obj.processed_count = (upload_obj.processed_count or 0) + inserted
-        if upload_obj.total_count and upload_obj.processed_count >= upload_obj.total_count:
-            upload_obj.status = UploadStatus.completed
+        # 1) Atomically increment processed_count and return updated processed_count + total_count
+        stmt = (
+            update(Upload)
+            .where(Upload.id == upload_id)
+            .values(processed_count=(Upload.processed_count + inserted))
+            .returning(Upload.processed_count, Upload.total_count)
+        )
+        res = await db.execute(stmt)
+        row = res.fetchone()
+
+        # If the update didn't return a row, the upload might have been deleted concurrently
+        if not row:
+            await db.rollback()
+            LOG.error("Upload row vanished while updating processed_count: %s", upload_id)
+            return
+
+        updated_processed, total = row[0], row[1]
+
+        # 2) If we've reached total, mark as completed
+        if total is not None and updated_processed >= total:
+            await db.execute(
+                update(Upload)
+                .where(Upload.id == upload_id)
+                .values(status=UploadStatus.completed)
+            )
+
         await db.commit()
+
     except Exception:
         await db.rollback()
         LOG.exception("Failed to commit DB changes for upload=%s", upload_id)
         return
+
 
     LOG.info(
         "Processed payload for upload=%s inserted=%d processed_count=%d total=%d",
