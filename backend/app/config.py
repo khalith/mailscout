@@ -18,7 +18,8 @@ class Settings(BaseSettings):
     )
 
     # Redis & queue
-    REDIS_URL: str = "redis://redis:6379/0"
+    REDIS_URL: str = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+
     QUEUE_KEY: str = "mailscout:jobs"
 
     # chunking

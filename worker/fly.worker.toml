@@ -4,18 +4,6 @@ primary_region = 'bom'
 kill_signal = "SIGINT"
 kill_timeout = 5
 
-[build]
-  builder = "heroku/buildpacks:20"
-
-[env]
-  QUEUE_KEY = "mailscout:jobs"
-  CONCURRENCY = "100"
-  PER_MX_LIMIT = "5"
-  INSERT_BATCH_SIZE = "200"
-
-[experimental]
-  auto_rollback = true
-
 # ---------------------------------------------------------
 # Workers normally don't expose ports — but Fly requires
 # at least one service block, so we keep a minimal TCP port.
@@ -34,10 +22,8 @@ kill_timeout = 5
     restart_limit = 0
 
 [http_service]
-  internal_port = 8080
+  internal_port = 9000
   force_https = true
-  auto_stop_machines = 'stop'
-  auto_start_machines = true
   min_machines_running = 0
   processes = ['app']
 

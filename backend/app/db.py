@@ -2,6 +2,7 @@
 
 import logging
 import asyncio
+import ssl
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 from .config import settings
@@ -26,10 +27,25 @@ def get_engine():
     global _engine
 
     if _engine is None:
+        # Build SSL context if needed
+        ssl_context = None
+        if "sslmode=require" in str(settings.DATABASE_URL):
+            ssl_context = ssl.create_default_context()
+            # optionally: ssl_context.check_hostname = False
+            # optionally: ssl_context.verify_mode = ssl.CERT_NONE
+
+        # Strip sslmode from URL (asyncpg does not support it)
+        db_url = str(settings.DATABASE_URL).replace("?sslmode=require", "")
+
+        connect_args = {}
+        if ssl_context:
+            connect_args["ssl"] = ssl_context
+
         _engine = create_async_engine(
-            settings.DATABASE_URL,
+            db_url,
             echo=bool(settings.DEBUG),
             future=True,
+            connect_args=connect_args,
         )
 
     return _engine

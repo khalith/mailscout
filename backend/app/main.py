@@ -12,9 +12,10 @@ app = FastAPI(title=settings.APP_NAME)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://mailscout-frontend.fly.dev",
+        "https://mailscout-backend.fly.dev",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "*",  # DEV ONLY — remove for production / replace with explicit origins
     ],
     allow_credentials=True,
     allow_methods=["*"],

@@ -1,13 +1,25 @@
 // frontend/src/api.js
 
-// FORCE backend URL — NEVER allow undefined
-export const API_URL =
-  (typeof import.meta.env.VITE_API_URL === "string" &&
-    import.meta.env.VITE_API_URL.trim() !== "" &&
-    import.meta.env.VITE_API_URL.trim() !== "undefined" &&
-    import.meta.env.VITE_API_URL.trim() !== "null")
-    ? import.meta.env.VITE_API_URL.trim()
-    : "http://localhost:8000";   // SAFE fallback
+export const API_URL = (() => {
+  // 1. Use Vite env if it exists at build time
+  const v = import.meta.env.VITE_API_URL;
+  if (typeof v === "string" && v.trim() !== "") {
+    return v.trim();
+  }
+
+  // 2. Runtime fallback on Fly.io (production)
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+
+    if (host.endsWith("fly.dev")) {
+      return "https://mailscout-backend.fly.dev";
+    }
+  }
+
+  // 3. Local dev fallback
+  return "";
+})();
+
 
 console.log(">>>> USING API_URL =", API_URL); // DEBUG — verify in DevTools
 
