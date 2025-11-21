@@ -62,46 +62,6 @@ jobs:
           --yes || true
 
     # ======================================
-    # DEPLOY APPLICATIONS
-    # ======================================
-
-    # BACKEND DEPLOY
-    - name: Deploy backend
-      run: |
-        flyctl deploy \
-          --config backend/fly.backend.toml \
-          --image ghcr.io/khalith/mailscout-backend:${{ steps.get_tag.outputs.LAST_TAG }} \
-          --detach \
-          -a mailscout-backend
-
-    # WORKER DEPLOY
-    - name: Deploy worker
-      run: |
-        flyctl deploy \
-          --config worker/fly.worker.toml \
-          --image ghcr.io/khalith/mailscout-worker:${{ steps.get_tag.outputs.LAST_TAG }} \
-          --detach \
-          -a mailscout-worker
-
-    # AUTOSCALER DEPLOY
-    - name: Deploy autoscaler
-      run: |
-        flyctl deploy \
-          --config autoscaler/fly.autoscaler.toml \
-          --image ghcr.io/khalith/mailscout-autoscaler:${{ steps.get_tag.outputs.LAST_TAG }} \
-          --detach \
-          -a mailscout-autoscaler
-
-    # FRONTEND DEPLOY
-    - name: Deploy frontend
-      run: |
-        flyctl deploy \
-          --config frontend/fly.frontend.toml \
-          --image ghcr.io/khalith/mailscout-frontend:${{ steps.get_tag.outputs.LAST_TAG }} \
-          --detach \
-          -a mailscout-frontend
-
-    # ======================================
     # SET BACKEND SECRETS
     # ======================================
     - name: Set backend secrets
@@ -151,4 +111,44 @@ jobs:
       run: |
         flyctl secrets set \
           VITE_API_URL="${{ vars.VITE_API_URL }}" \
+          -a mailscout-frontend
+
+    # ======================================
+    # DEPLOY APPLICATIONS
+    # ======================================
+
+    # BACKEND DEPLOY
+    - name: Deploy backend
+      run: |
+        flyctl deploy \
+          --config backend/fly.backend.toml \
+          --image ghcr.io/khalith/mailscout-backend:${{ steps.get_tag.outputs.LAST_TAG }} \
+          --detach \
+          -a mailscout-backend
+
+    # WORKER DEPLOY
+    - name: Deploy worker
+      run: |
+        flyctl deploy \
+          --config worker/fly.worker.toml \
+          --image ghcr.io/khalith/mailscout-worker:${{ steps.get_tag.outputs.LAST_TAG }} \
+          --detach \
+          -a mailscout-worker
+
+    # AUTOSCALER DEPLOY
+    - name: Deploy autoscaler
+      run: |
+        flyctl deploy \
+          --config autoscaler/fly.autoscaler.toml \
+          --image ghcr.io/khalith/mailscout-autoscaler:${{ steps.get_tag.outputs.LAST_TAG }} \
+          --detach \
+          -a mailscout-autoscaler
+
+    # FRONTEND DEPLOY
+    - name: Deploy frontend
+      run: |
+        flyctl deploy \
+          --config frontend/fly.frontend.toml \
+          --image ghcr.io/khalith/mailscout-frontend:${{ steps.get_tag.outputs.LAST_TAG }} \
+          --detach \
           -a mailscout-frontend
