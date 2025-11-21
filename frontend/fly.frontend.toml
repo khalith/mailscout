@@ -1,6 +1,6 @@
 # fly.frontend.toml
 app = "mailscout-frontend"
-primary_region = 'bom'
+primary_region = "bom"
 kill_signal = "SIGINT"
 kill_timeout = 5
 
@@ -34,12 +34,12 @@ kill_timeout = 5
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 0
-  processes = ['app']
+  processes = ["app"]
 
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
+  cpu_kind = "shared"
   cpus = 1
+  memory = "1gb"

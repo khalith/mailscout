@@ -1,6 +1,6 @@
 # fly.backend.toml
 app = "mailscout-backend"
-primary_region = 'bom'
+primary_region = "bom"
 kill_signal = "SIGINT"
 kill_timeout = 5
 
@@ -48,18 +48,20 @@ kill_timeout = 5
     grace_period = "10s"
     restart_limit = 0
 
-[deploy]
-  release_command = "alembic upgrade head"
-
+# HTTP Service (Fly launch defaults)
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 0
-  processes = ['app']
+  processes = ["app"]
+
+# Alembic migrations
+[deploy]
+  release_command = "alembic upgrade head"
 
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
+  cpu_kind = "shared"
   cpus = 1
+  memory = "1gb"
