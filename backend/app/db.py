@@ -8,54 +8,70 @@ from .config import settings
 from sqlalchemy.exc import OperationalError
 import sqlalchemy
 
+from .config import settings
+
 logger = logging.getLogger("mailscout.db")
 
-# Base must be defined at import time for Alembic
+# ---------------------------------------------------------
+# Define Base (needed by Alembic)
+# ---------------------------------------------------------
 Base = declarative_base()
 
-# Lazy-created engine and session factory (important for Alembic!)
+# ---------------------------------------------------------
+# Lazy engine + Lazy session maker
+# ---------------------------------------------------------
 _engine = None
 _session_maker = None
+_AsyncSessionLocal = None   # for backward compatibility
 
 
 def get_engine():
-    """
-    Lazily create async engine. Alembic imports this file, so engine
-    MUST NOT be created at import time.
-    """
+    """Lazy async engine creation."""
     global _engine
-
     if _engine is None:
         _engine = create_async_engine(
             settings.DATABASE_URL,
             echo=bool(settings.DEBUG),
             future=True,
         )
-
     return _engine
 
 
 def get_session_maker():
-    """
-    Lazily create session maker.
-    """
+    """Lazy sessionmaker creation."""
     global _session_maker
-
     if _session_maker is None:
         _session_maker = sessionmaker(
             bind=get_engine(),
             class_=AsyncSession,
             expire_on_commit=False,
         )
-
     return _session_maker
 
 
+# ---------------------------------------------------------
+# BACKWARD COMPATIBILITY FOR OLD WORKER IMPORTS
+# ---------------------------------------------------------
+def _init_async_session_local():
+    """
+    The old name AsyncSessionLocal should continue to work.
+    This wraps get_session_maker() lazily.
+    """
+    global _AsyncSessionLocal
+    if _AsyncSessionLocal is None:
+        _AsyncSessionLocal = get_session_maker()
+    return _AsyncSessionLocal
+
+
+# OLD PUBLIC NAME (worker.py uses this)
+AsyncSessionLocal = _init_async_session_local
+
+
+# ---------------------------------------------------------
+# FastAPI dependencies
+# ---------------------------------------------------------
 async def get_db():
-    """
-    FastAPI dependency — provides an async DB session.
-    """
-    SessionLocal = get_session_maker()
+    SessionLocal = _init_async_session_local()
     async with SessionLocal() as session:
         yield session
 
@@ -69,6 +85,9 @@ async def get_session():
         yield session
 
 
+# ---------------------------------------------------------
+# DB readiness check for Fly.io startup
+# ---------------------------------------------------------
 async def wait_for_db(max_retries: int = 8, delay: float = 2.0):
     """
     Wait for DB to accept connections — useful for Fly.io startup.
