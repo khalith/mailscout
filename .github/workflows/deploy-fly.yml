@@ -50,16 +50,16 @@ jobs:
     - name: Verify Flyctl auth
       run: flyctl auth whoami
 
-    # ======================================
-    # ENSURE VOLUME EXIST
-    # ======================================
-    - name: Ensure backend volume exists
-      run: |
-        flyctl volumes create uploads \
-          --size 1 \
-          --region bom \
-          -a mailscout-backend \
-          --yes || true
+    # # ======================================
+    # # ENSURE VOLUME EXIST
+    # # ======================================
+    # - name: Ensure backend volume exists
+    #   run: |
+    #     flyctl volumes create uploads \
+    #       --size 1 \
+    #       --region bom \
+    #       -a mailscout-backend \
+    #       --yes || true
 
     # ======================================
     # SET BACKEND SECRETS

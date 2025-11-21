@@ -1,6 +1,6 @@
 services:
   autoscaler:
-    image: mailscout/autoscaler
+    image: ghcr.io/khalith/mailscout-autoscaler:latest
     container_name: mailscout-autoscaler
     restart: unless-stopped
     environment:
