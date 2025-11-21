@@ -1,73 +1,110 @@
 # backend/app/db.py
+
 import logging
 import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 from .config import settings
+from sqlalchemy.exc import OperationalError
+import sqlalchemy
 
 logger = logging.getLogger("mailscout.db")
 
-# IMPORTANT — define Base here so Alembic can see metadata
+# Base must be defined at import time for Alembic
 Base = declarative_base()
 
-# Create engine lazily (no immediate connect on import).
-# Use settings.DATABASE_URL which is constructed from env in config.py
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=bool(settings.DEBUG),
-    future=True,
-)
+# Lazy-created engine and session factory (important for Alembic!)
+_engine = None
+_session_maker = None
 
-# Session factory
-AsyncSessionLocal = sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+
+def get_engine():
+    """
+    Lazily create async engine. Alembic imports this file, so engine
+    MUST NOT be created at import time.
+    """
+    global _engine
+
+    if _engine is None:
+        _engine = create_async_engine(
+            settings.DATABASE_URL,
+            echo=bool(settings.DEBUG),
+            future=True,
+        )
+
+    return _engine
+
+
+def get_session_maker():
+    """
+    Lazily create session maker.
+    """
+    global _session_maker
+
+    if _session_maker is None:
+        _session_maker = sessionmaker(
+            bind=get_engine(),
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+
+    return _session_maker
 
 
 async def get_db():
-    async with AsyncSessionLocal() as session:
+    """
+    FastAPI dependency — provides an async DB session.
+    """
+    SessionLocal = get_session_maker()
+    async with SessionLocal() as session:
         yield session
 
 
-# Helper: connection check with retries (can be called from startup scripts)
+async def get_session():
+    """
+    Optional duplicate helper (if some parts use this name).
+    """
+    SessionLocal = get_session_maker()
+    async with SessionLocal() as session:
+        yield session
+
+
 async def wait_for_db(max_retries: int = 8, delay: float = 2.0):
     """
-    Attempt to connect to the DB a few times and surface a clearer diagnostic
-    in case of authentication error vs network error.
+    Wait for DB to accept connections — useful for Fly.io startup.
     """
-    from sqlalchemy.exc import OperationalError
-    import sqlalchemy
+    engine = get_engine()   # <-- Important: use lazy engine
 
     last_exc = None
-    for i in range(max_retries):
+    for attempt in range(1, max_retries + 1):
         try:
             async with engine.connect() as conn:
-                # quick lightweight ping
                 await conn.execute(sqlalchemy.text("SELECT 1"))
-                logger.info("Database connected (attempt %d)", i + 1)
+                logger.info("Database connected (attempt %d)", attempt)
                 return True
+
         except OperationalError as e:
-            # OperationalError from driver: likely auth or network
             last_exc = e
             msg = str(e.__cause__ or e)
-            # Surface auth-specific message
+
             if "password authentication failed" in msg.lower():
                 logger.error("Database authentication failed: %s", msg)
                 raise
-            logger.warning("DB not ready (attempt %d/%d): %s", i + 1, max_retries, msg)
+
+            logger.warning(
+                "DB not ready (attempt %d/%d): %s",
+                attempt, max_retries, msg
+            )
             await asyncio.sleep(delay)
+
         except Exception as e:
             last_exc = e
-            logger.exception("Unexpected error while waiting for DB: %s", e)
+            logger.exception(
+                "Unexpected DB connection error (attempt %d/%d): %s",
+                attempt, max_retries, e
+            )
             await asyncio.sleep(delay)
 
-    logger.error("Could not connect to database after %d retries: last error: %s", max_retries, last_exc)
+    logger.error("Failed to connect to DB after %d retries. Last error: %s",
+                 max_retries, last_exc)
     raise last_exc
-
-# ADD THIS to backend/app/db.py
-
-async def get_session():
-    async with AsyncSessionLocal() as session:
-        yield session
