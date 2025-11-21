@@ -84,7 +84,7 @@ jobs:
           QUEUE_KEY="${{ vars.QUEUE_KEY }}" \
           CONCURRENCY="${{ vars.CONCURRENCY }}" \
           PER_MX_LIMIT="${{ vars.PER_MX_LIMIT }}" \
-          WORKER_SMTP="${{ vars.SMTP }}" \
+          WORKER_SMTP="${{ vars.WORKER_SMTP }}" \
           MX_CONCURRENCY="${{ vars.MX_CONCURRENCY }}" \
           BATCH_INSERT="${{ vars.BATCH_INSERT }}" \
           -a mailscout-worker
