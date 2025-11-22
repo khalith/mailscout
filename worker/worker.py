@@ -17,6 +17,35 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Any, Dict
 from sqlalchemy import update, select
 
+for sig in (signal.SIGINT, signal.SIGTERM):
+    loop.add_signal_handler(sig, cancel_all_tasks)
+
+async def safe_blpop(r, key, timeout):
+    try:
+        return await r.blpop(key, timeout=timeout)
+    except Exception as e:
+        LOG.error("Redis BLPOP failed: %s — attempting reconnect", e)
+        try:
+            await r.aclose()
+        except:
+            pass
+        await asyncio.sleep(0.2)
+        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        return None
+
+# Safe DB execution wrapper: retries when asyncpg connection is closed
+async def safe_execute(db, stmt, retries=3):
+    for attempt in range(1, retries + 1):
+        try:
+            return await db.execute(stmt)
+        except Exception as e:
+            msg = str(e).lower()
+            if "connection is closed" in msg or "closed pool" in msg:
+                await asyncio.sleep(0.2 * attempt)
+                continue
+            raise
+    raise e
+
 # Ensure /worker and backend app are importable
 WORKER_DIR = os.path.abspath(os.path.dirname(__file__))
 ROOT_DIR = os.path.abspath(os.path.join(WORKER_DIR, ".."))
@@ -49,7 +78,6 @@ except Exception:
 import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select
 
 from app.config import settings
 from app.models.upload import Upload, UploadStatus
@@ -63,7 +91,16 @@ logging.basicConfig(
 LOG = logging.getLogger("mailscout-worker")
 
 # SQLAlchemy engine / session factory
-engine = create_async_engine(settings.DATABASE_URL, future=True, echo=False)
+engine = create_async_engine(
+    settings.DATABASE_URL,
+    future=True,
+    echo=False,
+    pool_pre_ping=True,           # <<< ensures stale/broken connections are not reused
+    pool_recycle=180,             # <<< forces periodic connection refresh
+    pool_size=5,                  # safe pool for asyncpg
+    max_overflow=10,              # safe burst capacity
+    connect_args={"server_settings": {"application_name": "mailscout-worker"}},
+)
 AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 # Concurrency configuration (tune via env)
@@ -359,7 +396,10 @@ async def worker_loop():
     try:
         while True:
             try:
-                res = await r.blpop(settings.QUEUE_KEY, timeout=5)
+                res = await safe_blpop(r, settings.QUEUE_KEY, 5)
+                if res is None:
+                    continue
+
                 if not res:
                     await asyncio.sleep(0.05)
                     continue
@@ -380,7 +420,7 @@ async def worker_loop():
 
     finally:
         try:
-            await r.close()
+            await r.aclose()
         except Exception:
             pass
         try:

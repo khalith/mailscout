@@ -1,26 +1,38 @@
-# autoscaler/config.py
 import os
+from pydantic_settings import BaseSettings
 
-class Settings:
-    # Redis
-    REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-    QUEUE_KEY = os.getenv("QUEUE_KEY", "mailscout:jobs")
 
+class Settings(BaseSettings):
+    # ---------------------------------------------------------
+    # Redis queue
+    # ---------------------------------------------------------
+    REDIS_URL: str = os.getenv("REDIS_URL")
+    QUEUE_KEY: str = "mailscout:jobs"
+
+    # ---------------------------------------------------------
     # Scaling thresholds
-    SCALE_UP_THRESHOLD = int(os.getenv("SCALE_UP_THRESHOLD", "2000"))
-    SCALE_DOWN_THRESHOLD = int(os.getenv("SCALE_DOWN_THRESHOLD", "200"))
-    # Number of consecutive low-checks required before scaling down
-    IDLE_CHECKS_BEFORE_SCALE_DOWN = int(os.getenv("IDLE_CHECKS_BEFORE_SCALE_DOWN", "3"))
+    # ---------------------------------------------------------
+    MIN_WORKERS: int = int(os.getenv("MIN_WORKERS", 1))
+    MAX_WORKERS: int = int(os.getenv("MAX_WORKERS", 5))
 
-    # Limits
-    MIN_WORKERS = int(os.getenv("MIN_WORKERS", "1"))
-    MAX_WORKERS = int(os.getenv("MAX_WORKERS", "20"))
+    SCALE_UP_THRESHOLD: int = int(os.getenv("SCALE_UP_THRESHOLD", 10))
+    SCALE_DOWN_THRESHOLD: int = int(os.getenv("SCALE_DOWN_THRESHOLD", 0))
 
-    # Check interval (seconds)
-    INTERVAL = int(os.getenv("INTERVAL", "10"))
+    INTERVAL: int = int(os.getenv("INTERVAL", 15))  # seconds
+    IDLE_CHECKS_BEFORE_SCALE_DOWN: int = int(os.getenv("IDLE_CHECKS_BEFORE_SCALE_DOWN", 3))
 
-    # Path to docker-compose file (optional)
-    COMPOSE_FILE = os.getenv("COMPOSE_FILE", "docker-compose.yml")
-    COMPOSE_PROJECT = os.getenv("COMPOSE_PROJECT", None)  # optional
+    # ---------------------------------------------------------
+    # Docker compose local mode
+    # ---------------------------------------------------------
+    COMPOSE_FILE: str = os.getenv("COMPOSE_FILE", "docker-compose.yml")
+    COMPOSE_PROJECT: str = os.getenv("COMPOSE_PROJECT", "mailscout")
+
+    # ---------------------------------------------------------
+    # Fly.io Machines
+    # ---------------------------------------------------------
+    FLY_API_TOKEN: str = os.getenv("FLY_API_TOKEN", "")
+    FLY_REGION: str = os.getenv("FLY_REGION", "bom")
+    WORKER_IMAGE: str = os.getenv("WORKER_IMAGE", "")  # must be set when scaling on Fly
+
 
 settings = Settings()

@@ -28,5 +28,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy autoscaler code
 COPY . .
 
+ENV PYTHONPATH="/autoscaler"
+
 # Run autoscaler
 CMD ["python", "-u", "autoscaler.py"]

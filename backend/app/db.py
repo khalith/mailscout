@@ -18,7 +18,6 @@ Base = declarative_base()
 _engine = None
 _session_maker = None
 
-
 def get_engine():
     """
     Lazily create async engine. Alembic imports this file, so engine
@@ -46,10 +45,13 @@ def get_engine():
             echo=bool(settings.DEBUG),
             future=True,
             connect_args=connect_args,
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=10,
+            pool_recycle=180,  
         )
 
     return _engine
-
 
 def get_session_maker():
     """
@@ -66,15 +68,17 @@ def get_session_maker():
 
     return _session_maker
 
-
 async def get_db():
     """
     FastAPI dependency — provides an async DB session.
     """
+    from app.db import ensure_connection_alive
+
+    await ensure_connection_alive()   # <-- REQUIRED FIX
+
     SessionLocal = get_session_maker()
     async with SessionLocal() as session:
         yield session
-
 
 async def get_session():
     """
@@ -84,6 +88,20 @@ async def get_session():
     async with SessionLocal() as session:
         yield session
 
+async def ensure_connection_alive():
+    """
+    Fix for: asyncpg 'connection is closed' after Fly.io resume.
+    """
+    engine = get_engine()
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(sqlalchemy.text("SELECT 1"))
+    except Exception:
+        # recreate engine + sessionmaker
+        global _engine, _session_maker
+        _engine = None
+        _session_maker = None
+        engine = get_engine()
 
 async def wait_for_db(max_retries: int = 8, delay: float = 2.0):
     """

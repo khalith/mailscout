@@ -2,7 +2,7 @@
 app = "mailscout-worker"
 primary_region = 'bom'
 kill_signal = "SIGINT"
-kill_timeout = 5
+kill_timeout = 30
 
 # ---------------------------------------------------------
 # Workers normally don't expose ports — but Fly requires
