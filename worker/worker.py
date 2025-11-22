@@ -13,25 +13,38 @@ import logging
 import os
 import sys
 import inspect
+import signal
 from pathlib import Path
 from typing import List, Optional, Tuple, Any, Dict
 from sqlalchemy import update, select
 
+# SIGNAL HANDLING
+def cancel_all_tasks():
+    for task in asyncio.all_tasks():
+        task.cancel()
+
+loop = asyncio.get_event_loop()
 for sig in (signal.SIGINT, signal.SIGTERM):
     loop.add_signal_handler(sig, cancel_all_tasks)
 
+
+# -------------------------------------------------------------------
+# FIX #2 — safe_blpop shutdown-safe version
+# -------------------------------------------------------------------
 async def safe_blpop(r, key, timeout):
     try:
         return await r.blpop(key, timeout=timeout)
+    except (asyncio.CancelledError, GeneratorExit):
+        return None
     except Exception as e:
         LOG.error("Redis BLPOP failed: %s — attempting reconnect", e)
         try:
             await r.aclose()
-        except:
+        except Exception:
             pass
         await asyncio.sleep(0.2)
-        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
         return None
+
 
 # Safe DB execution wrapper: retries when asyncpg connection is closed
 async def safe_execute(db, stmt, retries=3):
@@ -46,6 +59,7 @@ async def safe_execute(db, stmt, retries=3):
             raise
     raise e
 
+
 # Ensure /worker and backend app are importable
 WORKER_DIR = os.path.abspath(os.path.dirname(__file__))
 ROOT_DIR = os.path.abspath(os.path.join(WORKER_DIR, ".."))
@@ -57,8 +71,7 @@ if ROOT_DIR not in sys.path:
 # Try to load the verifier package robustly
 ms_verifier = None
 try:
-    # Prefer normal import if PYTHONPATH is set correctly
-    import verifier as ms_verifier  # type: ignore
+    import verifier as ms_verifier
 except Exception:
     try:
         verifier_init = Path(WORKER_DIR) / "verifier" / "__init__.py"
@@ -67,7 +80,7 @@ except Exception:
 
             spec = importlib.util.spec_from_file_location("verifier", str(verifier_init))
             module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)  # type: ignore
+            spec.loader.exec_module(module)
             ms_verifier = module
         else:
             ms_verifier = None
@@ -83,6 +96,7 @@ from app.config import settings
 from app.models.upload import Upload, UploadStatus
 from app.models.email_result import EmailResult
 
+
 # Logging
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
@@ -90,48 +104,43 @@ logging.basicConfig(
 )
 LOG = logging.getLogger("mailscout-worker")
 
+
 # SQLAlchemy engine / session factory
 engine = create_async_engine(
     settings.DATABASE_URL,
     future=True,
     echo=False,
-    pool_pre_ping=True,           # <<< ensures stale/broken connections are not reused
-    pool_recycle=180,             # <<< forces periodic connection refresh
-    pool_size=5,                  # safe pool for asyncpg
-    max_overflow=10,              # safe burst capacity
+    pool_pre_ping=True,
+    pool_recycle=180,
+    pool_size=5,
+    max_overflow=10,
     connect_args={"server_settings": {"application_name": "mailscout-worker"}},
 )
 AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
-# Concurrency configuration (tune via env)
+
+# Concurrency config
 WORKER_CONCURRENCY = int(os.getenv("WORKER_CONCURRENCY", "50"))
 DNS_CONCURRENCY = int(os.getenv("DNS_CONCURRENCY", "50"))
 SMTP_CONCURRENCY = int(os.getenv("SMTP_CONCURRENCY", "25"))
 
-# Semaphores to bound concurrent tasks
 _semaphore = asyncio.Semaphore(WORKER_CONCURRENCY)
 _dns_semaphore = asyncio.Semaphore(DNS_CONCURRENCY)
 _smtp_semaphore = asyncio.Semaphore(SMTP_CONCURRENCY)
 
 
-# Helper to call verifier functions that might be sync or async.
-# Returns None on errors; never returns coroutine objects.
 async def _call_verifier(fn, *args, **kwargs):
     if fn is None:
         return None
     try:
         if inspect.iscoroutinefunction(fn):
             return await fn(*args, **kwargs)
-        # If function is regular sync function, run in threadpool
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
     except Exception as e:
         LOG.debug("verifier function %s raised %s", getattr(fn, "__name__", str(fn)), e)
         return None
 
-
-# Safe wrappers that call into ms_verifier when available.
-# If ms_verifier is absent, they return sensible defaults.
 
 async def normalize_email(email: str) -> str:
     if not ms_verifier:
@@ -140,13 +149,14 @@ async def normalize_email(email: str) -> str:
     out = await _call_verifier(fn, email)
     return (out or email or "").lower().strip()
 
+
 async def is_syntax_valid(email: str) -> bool:
     if not ms_verifier:
-        # basic fallback check: presence of '@' + a dot in domain
         return "@" in (email or "") and "." in (email.split("@")[-1] or "")
     fn = getattr(ms_verifier, "is_syntax_valid", None)
     out = await _call_verifier(fn, email)
     return bool(out)
+
 
 async def is_disposable(email: str) -> bool:
     if not ms_verifier:
@@ -154,6 +164,7 @@ async def is_disposable(email: str) -> bool:
     fn = getattr(ms_verifier, "is_disposable", None)
     out = await _call_verifier(fn, email)
     return bool(out)
+
 
 async def resolve_mx_for_domain(domain: str) -> List[str]:
     if not ms_verifier or not domain:
@@ -163,11 +174,11 @@ async def resolve_mx_for_domain(domain: str) -> List[str]:
         out = await _call_verifier(fn, domain)
     if out is None:
         return []
-    # ensure list of strings
     try:
         return [str(x) for x in out]
     except Exception:
         return []
+
 
 async def smtp_check_rcpt(domain_or_mailbox: str) -> Optional[bool]:
     if not ms_verifier:
@@ -175,6 +186,7 @@ async def smtp_check_rcpt(domain_or_mailbox: str) -> Optional[bool]:
     fn = getattr(ms_verifier, "smtp_check_rcpt", None)
     async with _smtp_semaphore:
         return await _call_verifier(fn, domain_or_mailbox)
+
 
 async def is_catch_all(domain: str) -> bool:
     if not ms_verifier or not domain:
@@ -184,15 +196,16 @@ async def is_catch_all(domain: str) -> bool:
         out = await _call_verifier(fn, domain)
     return bool(out)
 
+
 async def identify_provider(email: str) -> Optional[str]:
     if not ms_verifier:
         return None
     fn = getattr(ms_verifier, "identify_provider", None)
     return await _call_verifier(fn, email)
 
+
 async def compute_score_and_status(email: Optional[str], checks: Dict[str, Any]) -> Tuple[int, str]:
     if not ms_verifier:
-        # fallback simple scoring
         if not checks.get("syntax"):
             return 0, "invalid"
         if checks.get("has_mx"):
@@ -205,11 +218,9 @@ async def compute_score_and_status(email: Optional[str], checks: Dict[str, Any])
             return int(out[0] or 0), str(out[1] or "")
         except Exception:
             pass
-    # final fallback
     return (0, "invalid") if not checks.get("syntax") else (90, "valid") if checks.get("has_mx") else (30, "risky")
 
 
-# Sanitize object to make it JSON-serializable (remove awaitables/coroutines)
 def _sanitize_for_json(obj):
     if inspect.isawaitable(obj) or inspect.iscoroutine(obj):
         return None
@@ -217,17 +228,14 @@ def _sanitize_for_json(obj):
         return {k: _sanitize_for_json(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_sanitize_for_json(v) for v in obj]
-    # basic scalar types are fine
     return obj
 
 
-# Process single email with semaphore protection. Returns dict or None.
 async def process_single_email(upload_id: str, email: str) -> Optional[dict]:
     async with _semaphore:
         try:
             normalized = await normalize_email(email)
 
-            # syntax
             syntax_ok = await is_syntax_valid(normalized)
 
             domain = normalized.split("@")[-1] if "@" in normalized else ""
@@ -251,10 +259,7 @@ async def process_single_email(upload_id: str, email: str) -> Optional[dict]:
                 "provider": provider,
             }
 
-            # compute score/status
             score, status = await compute_score_and_status(normalized, checks)
-
-            # sanitize checks so no coroutine/awaitable objects leak
             checks = _sanitize_for_json(checks)
 
             return {
@@ -270,7 +275,9 @@ async def process_single_email(upload_id: str, email: str) -> Optional[dict]:
             return None
 
 
-# Process batch payload: run concurrent checks, write results with no_autoflush
+# -------------------------------------------------------------------
+# FIX #1 — log chunk start/end timestamps for each payload
+# -------------------------------------------------------------------
 async def process_payload(payload: dict, db: AsyncSession):
     upload_id = payload.get("upload_id")
     emails: List[str] = payload.get("emails") or []
@@ -279,6 +286,10 @@ async def process_payload(payload: dict, db: AsyncSession):
         LOG.warning("Invalid payload: %s", payload)
         return
 
+    from datetime import datetime
+    chunk_start = datetime.utcnow()
+    LOG.info("Chunk START upload=%s size=%d time=%s", upload_id, len(emails), chunk_start)
+
     # load upload row
     q = await db.execute(select(Upload).where(Upload.id == upload_id))
     upload_obj = q.scalars().first()
@@ -286,19 +297,15 @@ async def process_payload(payload: dict, db: AsyncSession):
         LOG.error("Upload not found: %s", upload_id)
         return
 
-    # mark processing early and persist so UI sees it
     if upload_obj.status == UploadStatus.queued:
         upload_obj.status = UploadStatus.processing
         try:
             await db.commit()
         except Exception:
-            # commit is best-effort; if it fails we'll continue
             await db.rollback()
 
-    # spawn tasks for email checks (bounded concurrency happens inside process_single_email)
     tasks = [asyncio.create_task(process_single_email(upload_id, e)) for e in emails]
     results = []
-    # collect as completed so we can start inserting earlier
     for coro in asyncio.as_completed(tasks):
         try:
             res = await coro
@@ -308,7 +315,6 @@ async def process_payload(payload: dict, db: AsyncSession):
             LOG.exception("Unhandled exception in email task")
 
     if not results:
-        # nothing to write; still ensure DB state persisted
         try:
             await db.commit()
         except Exception:
@@ -316,11 +322,9 @@ async def process_payload(payload: dict, db: AsyncSession):
         return
 
     inserted = 0
-    # Avoid premature autoflush when we check for existing results
     with db.no_autoflush:
         for item in results:
             try:
-                # double-check existence
                 q2 = await db.execute(
                     select(EmailResult).where(
                         EmailResult.upload_id == upload_id,
@@ -343,9 +347,7 @@ async def process_payload(payload: dict, db: AsyncSession):
             except Exception:
                 LOG.exception("Error inserting email result for %s", item.get("email"))
 
-    # Update counters and status atomically and commit
     try:
-        # 1) Atomically increment processed_count and return updated processed_count + total_count
         stmt = (
             update(Upload)
             .where(Upload.id == upload_id)
@@ -354,8 +356,6 @@ async def process_payload(payload: dict, db: AsyncSession):
         )
         res = await db.execute(stmt)
         row = res.fetchone()
-
-        # If the update didn't return a row, the upload might have been deleted concurrently
         if not row:
             await db.rollback()
             LOG.error("Upload row vanished while updating processed_count: %s", upload_id)
@@ -363,12 +363,9 @@ async def process_payload(payload: dict, db: AsyncSession):
 
         updated_processed, total = row[0], row[1]
 
-        # 2) If we've reached total, mark as completed
         if total is not None and updated_processed >= total:
             await db.execute(
-                update(Upload)
-                .where(Upload.id == upload_id)
-                .values(status=UploadStatus.completed)
+                update(Upload).where(Upload.id == upload_id).values(status=UploadStatus.completed)
             )
 
         await db.commit()
@@ -378,7 +375,6 @@ async def process_payload(payload: dict, db: AsyncSession):
         LOG.exception("Failed to commit DB changes for upload=%s", upload_id)
         return
 
-
     LOG.info(
         "Processed payload for upload=%s inserted=%d processed_count=%d total=%d",
         upload_id,
@@ -387,8 +383,20 @@ async def process_payload(payload: dict, db: AsyncSession):
         upload_obj.total_count or 0,
     )
 
+    # END LOG
+    chunk_end = datetime.utcnow()
+    LOG.info(
+        "Chunk END upload=%s size=%d time=%s duration=%.2fs",
+        upload_id,
+        len(emails),
+        chunk_end,
+        (chunk_end - chunk_start).total_seconds(),
+    )
 
-# Main worker loop
+
+# -------------------------------------------------------------------
+# FIX #3 — worker_loop Handles CancelledError cleanly
+# -------------------------------------------------------------------
 async def worker_loop():
     r = redis.from_url(settings.REDIS_URL, decode_responses=True)
     LOG.info("Worker connected to Redis: %s queue=%s", settings.REDIS_URL, settings.QUEUE_KEY)
@@ -418,6 +426,10 @@ async def worker_loop():
                 LOG.exception("Unhandled error in worker iteration")
                 await asyncio.sleep(0.5)
 
+    except asyncio.CancelledError:
+        LOG.info("Worker shutdown cleanly")
+        return
+
     finally:
         try:
             await r.aclose()
@@ -430,6 +442,9 @@ async def worker_loop():
         LOG.info("Worker shutdown")
 
 
+# -------------------------------------------------------------------
+# FIX #4 — flush logs on exit
+# -------------------------------------------------------------------
 def main():
     LOG.info("Starting mailscout worker")
     loop = asyncio.get_event_loop()
@@ -438,6 +453,11 @@ def main():
     except (KeyboardInterrupt, SystemExit):
         LOG.info("Worker received exit signal")
     finally:
+        for h in LOG.handlers:
+            try:
+                h.flush()
+            except Exception:
+                pass
         LOG.info("Worker done")
 
 
