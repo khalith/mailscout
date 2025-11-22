@@ -1,16 +1,13 @@
+# autoscaler/autoscaler.py
 import asyncio
-import json
 import os
 import sys
-import shlex
 import subprocess
-from datetime import datetime
-
 import httpx
 import redis.asyncio as redis
-
+import math
+from datetime import datetime
 from config import settings
-
 
 # ============================================================
 #  Detect RUNTIME (local docker OR fly.io)
@@ -21,13 +18,11 @@ def detect_runtime():
         return "fly"
     return "docker"
 
-
 RUNTIME = detect_runtime()
 print(f"[autoscaler] Runtime detected => {RUNTIME}")
 
-
 # ============================================================
-#  Redis Queue Length
+#  Redis Helpers
 # ============================================================
 
 async def get_queue_length(r):
@@ -39,6 +34,18 @@ async def get_queue_length(r):
         print(f"[autoscaler] Redis error while reading queue: {e}")
         return 0
 
+async def get_progress(r):
+    """Read progress counters from workers (progress:* keys)."""
+    try:
+        keys = await r.keys("progress:*")
+        progress = {}
+        for k in keys:
+            data = await r.hgetall(k)
+            progress[k] = data
+        return progress
+    except Exception as e:
+        print(f"[autoscaler] Redis error while reading progress: {e}")
+        return {}
 
 # ============================================================
 #  Docker Scaling (LOCAL)
@@ -51,7 +58,6 @@ def _compose_cmd():
     if settings.COMPOSE_PROJECT:
         cmd += ["-p", settings.COMPOSE_PROJECT]
     return cmd
-
 
 def docker_get_current_workers():
     try:
@@ -66,19 +72,15 @@ def docker_get_current_workers():
         print(f"[autoscaler] Docker: failed detecting workers, using MIN_WORKERS fallback")
         return settings.MIN_WORKERS
 
-
 def docker_scale_workers(count):
     count = max(settings.MIN_WORKERS, min(settings.MAX_WORKERS, count))
     print(f"[autoscaler] Docker: scaling workers → target={count}")
-
-    cmd = _compose_cmd() + ["up", "-d", "--scale", f"worker={count}"]
-
+    cmd = _compose_cmd() + ["up", "-d", "--scale", f"worker={count}", "--no-recreate"]
     try:
         subprocess.check_call(cmd)
         print(f"[autoscaler] Docker: scale request successful")
     except Exception as e:
         print(f"[autoscaler] Docker scale failed: {e}")
-
 
 # ============================================================
 #  Fly.io Machines API
@@ -95,14 +97,11 @@ fly_headers = (
     else None
 )
 
-
 async def fly_list_workers():
     print("[autoscaler] Checking Fly.io worker machines...")
-
     if not fly_headers:
         print("[autoscaler] ERROR: Missing FLY_API_TOKEN")
         return []
-
     async with httpx.AsyncClient() as client:
         try:
             r = await client.get(
@@ -119,14 +118,11 @@ async def fly_list_workers():
             print("[autoscaler] Fly list error:", e)
             return []
 
-
 async def fly_launch_worker():
     print("[autoscaler] Fly.io: launching new worker machine...")
-
     if not fly_headers:
         print("[autoscaler] Missing API token, cannot launch worker")
         return
-
     body = {
         "name": None,
         "region": FLY_REGION,
@@ -142,7 +138,6 @@ async def fly_launch_worker():
             },
         },
     }
-
     async with httpx.AsyncClient() as client:
         try:
             r = await client.post(
@@ -156,10 +151,8 @@ async def fly_launch_worker():
         except Exception as e:
             print("[autoscaler] Fly create error:", e)
 
-
 async def fly_destroy_worker(machine_id):
     print(f"[autoscaler] Fly.io: destroying worker {machine_id} ...")
-
     async with httpx.AsyncClient() as client:
         try:
             r = await client.delete(
@@ -173,7 +166,6 @@ async def fly_destroy_worker(machine_id):
                 print("[autoscaler] Fly.io: destroyed worker", machine_id)
         except Exception as e:
             print("[autoscaler] destroy error:", e)
-
 
 # ============================================================
 #  AUTOSCALE LOOP
@@ -190,67 +182,80 @@ async def autoscale_loop():
 
     while True:
         qlen = await get_queue_length(r)
+        progress = await get_progress(r)
         print(f"[autoscaler] --- Cycle Start --- Queue={qlen}")
 
         # ---------- Local Docker ----------
         if RUNTIME == "docker":
             current = docker_get_current_workers()
+            # needed = min(settings.MAX_WORKERS,
+            #              max(settings.MIN_WORKERS,
+            #                  math.ceil(qlen / settings.CHUNK_SIZE)))
+            needed = math.ceil(qlen / settings.CHUNK_SIZE)
+            
+            if qlen > 0 and qlen < settings.CHUNK_SIZE:
+                needed = min(qlen, settings.MAX_WORKERS)
+                
+            needed = max(settings.MIN_WORKERS, min(settings.MAX_WORKERS, needed))
 
-            if qlen > settings.SCALE_UP_THRESHOLD:
-                print(f"[autoscaler] Queue high → considering scale up")
-                if current < settings.MAX_WORKERS:
-                    print(f"[autoscaler] Scaling up: {current} → {current + 1}")
-                    docker_scale_workers(current + 1)
-                else:
-                    print("[autoscaler] Already at MAX_WORKERS, not scaling up")
+            if needed > current:
+                print(f"[autoscaler] Scaling up: {current} → {needed}")
+                docker_scale_workers(needed)
                 idle_streak = 0
-
-            elif qlen == 0:
+            elif needed < current:
                 idle_streak += 1
-                print(f"[autoscaler] Queue empty → idle streak now {idle_streak}")
-                if idle_streak >= settings.IDLE_CHECKS_BEFORE_SCALE_DOWN and current > settings.MIN_WORKERS:
-                    print(f"[autoscaler] Scaling down: {current} → {current - 1}")
-                    docker_scale_workers(current - 1)
+                print(f"[autoscaler] Idle streak={idle_streak}")
+                if idle_streak >= settings.IDLE_CHECKS_BEFORE_SCALE_DOWN:
+                    print(f"[autoscaler] Scaling down: {current} → {needed}")
+                    docker_scale_workers(needed)
                     idle_streak = 0
                 else:
                     print("[autoscaler] Not scaling down yet")
             else:
-                print("[autoscaler] Queue low but not empty → no scaling change")
+                print("[autoscaler] Worker count already matches need")
 
         # ---------- Fly.io Machines ----------
         else:
             workers = await fly_list_workers()
             current = len(workers)
+            # needed = min(settings.MAX_WORKERS,
+            #             max(settings.MIN_WORKERS,
+            #                 math.ceil(qlen / settings.CHUNK_SIZE)))
+            needed = math.ceil(qlen / settings.CHUNK_SIZE)
+            
+            if qlen > 0 and qlen < settings.CHUNK_SIZE:
+                needed = min(qlen, settings.MAX_WORKERS)
+                
+            needed = max(settings.MIN_WORKERS, min(settings.MAX_WORKERS, needed))
 
-            if qlen > settings.SCALE_UP_THRESHOLD:
-                print("[autoscaler] Queue high → considering scale up")
-                if current < settings.MAX_WORKERS:
-                    print(f"[autoscaler] Fly.io: scaling up → {current} → {current + 1}")
+            if needed > current:
+                to_add = needed - current
+                print(f"[autoscaler] Fly.io: scaling up → {current} → {needed} (adding {to_add})")
+                for _ in range(to_add):
                     await fly_launch_worker()
-                else:
-                    print("[autoscaler] Fly.io: at MAX_WORKERS, cannot scale up")
                 idle_streak = 0
-
-            elif qlen == 0:
+            elif needed < current:
                 idle_streak += 1
                 print(f"[autoscaler] Queue empty → idle streak={idle_streak}")
-                if idle_streak >= settings.IDLE_CHECKS_BEFORE_SCALE_DOWN and current > settings.MIN_WORKERS:
-                    w = workers[-1]
-                    print(f"[autoscaler] Fly.io: scaling down → removing {w['id']}")
-                    await fly_destroy_worker(w["id"])
+                if idle_streak >= settings.IDLE_CHECKS_BEFORE_SCALE_DOWN:
+                    to_remove = current - needed
+                    print(f"[autoscaler] Fly.io: scaling down → {current} → {needed} (removing {to_remove})")
+                    workers.sort(key=lambda m: m.get("created_at", ""))
+                    for w in workers[-to_remove:]:
+                        await fly_destroy_worker(w["id"])
                     idle_streak = 0
                 else:
                     print("[autoscaler] Fly.io: not scaling down yet")
             else:
-                print("[autoscaler] Queue low → no scaling action")
+                print("[autoscaler] Worker count already matches need")
 
+        # Status line with progress
         print(
-            f"[autoscaler] Status → Queue={qlen}, Workers={current}, Idle={idle_streak}/{settings.IDLE_CHECKS_BEFORE_SCALE_DOWN}"
+            f"[autoscaler] Status → Queue={qlen}, Workers={current}, Needed={needed}, Idle={idle_streak}/{settings.IDLE_CHECKS_BEFORE_SCALE_DOWN}"
         )
         print("[autoscaler] --- Cycle End ---\n")
 
         await asyncio.sleep(settings.INTERVAL)
-
 
 # ============================================================
 #  ENTRYPOINT

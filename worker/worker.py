@@ -1,12 +1,4 @@
 # worker/worker.py
-# Final, hardened worker implementation for MailScout.
-# - Robust dynamic import of worker/verifier package
-# - Handles sync & async verifier functions safely
-# - Bounded concurrency for DNS/SMTP and overall email checks
-# - Prevents coroutine/awaitable objects from being stored into JSON
-# - Uses session.no_autoflush to avoid premature autoflush races
-# - Clear, consistent logging and stable behavior in Docker
-
 import asyncio
 import json
 import logging
@@ -27,9 +19,8 @@ loop = asyncio.get_event_loop()
 for sig in (signal.SIGINT, signal.SIGTERM):
     loop.add_signal_handler(sig, cancel_all_tasks)
 
-
 # -------------------------------------------------------------------
-# FIX #2 — safe_blpop shutdown-safe version
+# safe_blpop shutdown-safe version
 # -------------------------------------------------------------------
 async def safe_blpop(r, key, timeout):
     try:
@@ -45,22 +36,37 @@ async def safe_blpop(r, key, timeout):
         await asyncio.sleep(0.2)
         return None
 
-
-# Safe DB execution wrapper: retries when asyncpg connection is closed
+# -------------------------------------------------------------------
+# Safe DB wrappers
+# -------------------------------------------------------------------
 async def safe_execute(db, stmt, retries=3):
     for attempt in range(1, retries + 1):
         try:
             return await db.execute(stmt)
         except Exception as e:
             msg = str(e).lower()
-            if "connection is closed" in msg or "closed pool" in msg:
-                await asyncio.sleep(0.2 * attempt)
+            if "connection is closed" in msg or "closed pool" in msg or "sslmode" in msg:
+                LOG.warning("DB execute failed (attempt %d/%d): %s", attempt, retries, e)
+                await asyncio.sleep(0.5 * attempt)
                 continue
             raise
     raise e
 
+async def safe_commit(db, retries=3):
+    for attempt in range(1, retries + 1):
+        try:
+            await db.commit()
+            return
+        except Exception as e:
+            LOG.warning("Commit failed (attempt %d/%d): %s", attempt, retries, e)
+            await db.rollback()
+            if attempt == retries:
+                raise
+            await asyncio.sleep(0.5 * attempt)
 
+# -------------------------------------------------------------------
 # Ensure /worker and backend app are importable
+# -------------------------------------------------------------------
 WORKER_DIR = os.path.abspath(os.path.dirname(__file__))
 ROOT_DIR = os.path.abspath(os.path.join(WORKER_DIR, ".."))
 if WORKER_DIR not in sys.path:
@@ -77,7 +83,6 @@ except Exception:
         verifier_init = Path(WORKER_DIR) / "verifier" / "__init__.py"
         if verifier_init.exists():
             import importlib.util
-
             spec = importlib.util.spec_from_file_location("verifier", str(verifier_init))
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
@@ -96,14 +101,12 @@ from app.config import settings
 from app.models.upload import Upload, UploadStatus
 from app.models.email_result import EmailResult
 
-
 # Logging
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
     format="%(asctime)s %(levelname)s %(message)s",
 )
 LOG = logging.getLogger("mailscout-worker")
-
 
 # SQLAlchemy engine / session factory
 engine = create_async_engine(
@@ -117,7 +120,6 @@ engine = create_async_engine(
     connect_args={"server_settings": {"application_name": "mailscout-worker"}},
 )
 AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-
 
 # Concurrency config
 WORKER_CONCURRENCY = int(os.getenv("WORKER_CONCURRENCY", "50"))
@@ -276,12 +278,11 @@ async def process_single_email(upload_id: str, email: str) -> Optional[dict]:
 
 
 # -------------------------------------------------------------------
-# FIX #1 — log chunk start/end timestamps for each payload
+# Chunk processing with progress visibility + safe DB
 # -------------------------------------------------------------------
 async def process_payload(payload: dict, db: AsyncSession):
     upload_id = payload.get("upload_id")
     emails: List[str] = payload.get("emails") or []
-
     if not upload_id or not emails:
         LOG.warning("Invalid payload: %s", payload)
         return
@@ -290,8 +291,8 @@ async def process_payload(payload: dict, db: AsyncSession):
     chunk_start = datetime.utcnow()
     LOG.info("Chunk START upload=%s size=%d time=%s", upload_id, len(emails), chunk_start)
 
-    # load upload row
-    q = await db.execute(select(Upload).where(Upload.id == upload_id))
+    # load upload row safely
+    q = await safe_execute(db, select(Upload).where(Upload.id == upload_id))
     upload_obj = q.scalars().first()
     if not upload_obj:
         LOG.error("Upload not found: %s", upload_id)
@@ -300,23 +301,45 @@ async def process_payload(payload: dict, db: AsyncSession):
     if upload_obj.status == UploadStatus.queued:
         upload_obj.status = UploadStatus.processing
         try:
-            await db.commit()
+            await safe_commit(db)
         except Exception:
             await db.rollback()
 
+    # process emails...
     tasks = [asyncio.create_task(process_single_email(upload_id, e)) for e in emails]
     results = []
+    processed_in_chunk = 0
+    r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+
     for coro in asyncio.as_completed(tasks):
         try:
             res = await coro
             if res:
                 results.append(res)
+                processed_in_chunk += 1
+                STEP = 50
+                if processed_in_chunk % STEP == 0 or processed_in_chunk == len(emails):
+                    LOG.info("Chunk progress upload=%s processed=%d/%d",
+                             upload_id, processed_in_chunk, len(emails))
+                try:
+                    await r.hset(
+                        f"progress:{upload_id}",
+                        mapping={
+                            "processed_in_chunk": processed_in_chunk,
+                            "chunk_size": len(emails),
+                            "timestamp": datetime.utcnow().isoformat(),
+                        },
+                    )
+                except Exception as e:
+                    LOG.debug("Redis progress update failed: %s", e)
         except Exception:
             LOG.exception("Unhandled exception in email task")
 
+    await r.aclose()
+
     if not results:
         try:
-            await db.commit()
+            await safe_commit(db)
         except Exception:
             await db.rollback()
         return
@@ -325,7 +348,8 @@ async def process_payload(payload: dict, db: AsyncSession):
     with db.no_autoflush:
         for item in results:
             try:
-                q2 = await db.execute(
+                q2 = await safe_execute(
+                    db,
                     select(EmailResult).where(
                         EmailResult.upload_id == upload_id,
                         EmailResult.email == item["email"],
@@ -333,7 +357,6 @@ async def process_payload(payload: dict, db: AsyncSession):
                 )
                 if q2.scalars().first():
                     continue
-
                 r = EmailResult(
                     upload_id=item["upload_id"],
                     email=item["email"],
@@ -354,36 +377,34 @@ async def process_payload(payload: dict, db: AsyncSession):
             .values(processed_count=(Upload.processed_count + inserted))
             .returning(Upload.processed_count, Upload.total_count)
         )
-        res = await db.execute(stmt)
+        res = await safe_execute(db, stmt)
         row = res.fetchone()
         if not row:
             await db.rollback()
             LOG.error("Upload row vanished while updating processed_count: %s", upload_id)
             return
-
         updated_processed, total = row[0], row[1]
-
         if total is not None and updated_processed >= total:
-            await db.execute(
+            await safe_execute(
+                db,
                 update(Upload).where(Upload.id == upload_id).values(status=UploadStatus.completed)
             )
-
-        await db.commit()
-
-    except Exception:
+        await safe_commit(db)
+    except Exception as e:
         await db.rollback()
         LOG.exception("Failed to commit DB changes for upload=%s", upload_id)
+        # requeue payload
+        try:
+            r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            await r.rpush(settings.QUEUE_KEY, json.dumps(payload))
+            await r.aclose()
+            LOG.info("Requeued payload for upload=%s after DB failure", upload_id)
+        except Exception as re:
+            LOG.error("Failed to requeue payload: %s", re)
         return
 
-    LOG.info(
-        "Processed payload for upload=%s inserted=%d processed_count=%d total=%d",
-        upload_id,
-        inserted,
-        upload_obj.processed_count or 0,
-        upload_obj.total_count or 0,
-    )
-
-    # END LOG
+    LOG.info("Processed payload for upload=%s inserted=%d processed_count=%d total=%d",
+             upload_id, inserted, upload_obj.processed_count or 0, upload_obj.total_count or 0)
     chunk_end = datetime.utcnow()
     LOG.info(
         "Chunk END upload=%s size=%d time=%s duration=%.2fs",
@@ -395,7 +416,7 @@ async def process_payload(payload: dict, db: AsyncSession):
 
 
 # -------------------------------------------------------------------
-# FIX #3 — worker_loop Handles CancelledError cleanly
+# Worker loop
 # -------------------------------------------------------------------
 async def worker_loop():
     r = redis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -420,7 +441,16 @@ async def worker_loop():
                     continue
 
                 async with AsyncSessionLocal() as db:
-                    await process_payload(payload, db)
+                    try:
+                        await process_payload(payload, db)
+                    except Exception as e:
+                        LOG.exception("Unhandled error in process_payload: %s", e)
+                        # requeue payload if processing failed
+                        try:
+                            await r.rpush(settings.QUEUE_KEY, json.dumps(payload))
+                            LOG.info("Requeued payload after failure")
+                        except Exception as re:
+                            LOG.error("Failed to requeue payload: %s", re)
 
             except Exception:
                 LOG.exception("Unhandled error in worker iteration")
@@ -443,7 +473,7 @@ async def worker_loop():
 
 
 # -------------------------------------------------------------------
-# FIX #4 — flush logs on exit
+# Flush logs on exit
 # -------------------------------------------------------------------
 def main():
     LOG.info("Starting mailscout worker")

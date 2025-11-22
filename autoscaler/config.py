@@ -1,3 +1,4 @@
+# autoscaler/config.py
 import os
 from pydantic_settings import BaseSettings
 
@@ -15,7 +16,7 @@ class Settings(BaseSettings):
     MIN_WORKERS: int = int(os.getenv("MIN_WORKERS", 1))
     MAX_WORKERS: int = int(os.getenv("MAX_WORKERS", 5))
 
-    SCALE_UP_THRESHOLD: int = int(os.getenv("SCALE_UP_THRESHOLD", 10))
+    CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", 10))
     SCALE_DOWN_THRESHOLD: int = int(os.getenv("SCALE_DOWN_THRESHOLD", 0))
 
     INTERVAL: int = int(os.getenv("INTERVAL", 15))  # seconds

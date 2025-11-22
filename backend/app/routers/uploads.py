@@ -14,8 +14,6 @@ from fastapi import (
     HTTPException,
     Path,
 )
-from fastapi.responses import JSONResponse
-
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -27,9 +25,33 @@ from ..models.upload import Upload, UploadStatus
 from ..models.email_result import EmailResult
 from ..services.chunker import chunk_list
 
-
 router = APIRouter()
 
+# ---------------------------------------------------
+# Safe DB helpers
+# ---------------------------------------------------
+async def safe_execute(db: AsyncSession, stmt, retries: int = 3):
+    for attempt in range(1, retries + 1):
+        try:
+            return await db.execute(stmt)
+        except Exception as e:
+            msg = str(e).lower()
+            if "connection is closed" in msg or "closed pool" in msg or "sslmode" in msg:
+                await asyncio.sleep(0.5 * attempt)
+                continue
+            raise
+    raise e
+
+async def safe_commit(db: AsyncSession, retries: int = 3):
+    for attempt in range(1, retries + 1):
+        try:
+            await db.commit()
+            return
+        except Exception as e:
+            await db.rollback()
+            if attempt == retries:
+                raise
+            await asyncio.sleep(0.5 * attempt)
 
 # ---------------------------------------------------
 # Redis Pusher (SAFE, SYNC EXECUTION)
@@ -39,7 +61,6 @@ async def push_jobs_to_redis(payloads):
     for p in payloads:
         await r.rpush(settings.QUEUE_KEY, json.dumps(p))
     await r.close()
-
 
 # ---------------------------------------------------
 # CSV Parser
@@ -55,7 +76,6 @@ def parse_csv(content: bytes):
                 emails.append(c)
     return emails
 
-
 # ---------------------------------------------------
 # XLSX Parser
 # ---------------------------------------------------
@@ -69,7 +89,6 @@ def parse_xlsx(content: bytes):
             if c:
                 emails.append(c)
     return emails
-
 
 # ---------------------------------------------------
 # XLS Parser
@@ -85,7 +104,6 @@ def parse_xls(content: bytes):
             emails.append(cleaned[0])
     return emails
 
-
 # ---------------------------------------------------
 # FIXED UPLOAD ROUTE (NO BACKGROUNDTASKS)
 # ---------------------------------------------------
@@ -94,7 +112,6 @@ async def create_upload(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-
     fname = file.filename.lower()
     if not fname.endswith((".csv", ".txt", ".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only CSV, TXT, XLSX, XLS allowed")
@@ -114,7 +131,7 @@ async def create_upload(
 
     upload_id = str(uuid.uuid4())
 
-    # Save upload row
+    # Save upload row safely
     upload = Upload(
         id=upload_id,
         filename=file.filename,
@@ -122,7 +139,7 @@ async def create_upload(
         status=UploadStatus.queued,
     )
     db.add(upload)
-    await db.commit()
+    await safe_commit(db)
 
     # Chunk email list
     chunk_size = settings.CHUNK_SIZE
@@ -131,7 +148,7 @@ async def create_upload(
         for chunk in chunk_list(normalized, chunk_size)
     ]
 
-    # 🚀 IMPORTANT FIX: push synchronously (BackgroundTasks is unreliable inside Docker)
+    # Push synchronously
     await push_jobs_to_redis(payloads)
 
     return {
@@ -139,7 +156,6 @@ async def create_upload(
         "total": len(normalized),
         "chunks": len(payloads),
     }
-
 
 # ---------------------------------------------------
 # Status Route
@@ -149,14 +165,15 @@ async def get_upload_status(
     upload_id: str = Path(...),
     db: AsyncSession = Depends(get_db),
 ):
-    q = await db.execute(select(Upload).where(Upload.id == upload_id))
+    q = await safe_execute(db, select(Upload).where(Upload.id == upload_id))
     upload = q.scalars().first()
 
     if not upload:
         raise HTTPException(status_code=404, detail="upload not found")
 
-    q2 = await db.execute(
-        select(func.count()).select_from(EmailResult).where(EmailResult.upload_id == upload_id)
+    q2 = await safe_execute(
+        db,
+        select(func.count()).select_from(EmailResult).where(EmailResult.upload_id == upload_id),
     )
     inserted = q2.scalar_one() or 0
 

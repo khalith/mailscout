@@ -99,7 +99,6 @@ jobs:
           QUEUE_KEY="${{ vars.QUEUE_KEY }}" \
           MIN_WORKERS="${{ vars.MIN_WORKERS }}" \
           MAX_WORKERS="${{ vars.MAX_WORKERS }}" \
-          SCALE_UP_THRESHOLD="${{ vars.SCALE_UP_THRESHOLD }}" \
           SCALE_DOWN_THRESHOLD="${{ vars.SCALE_DOWN_THRESHOLD }}" \
           INTERVAL="${{ vars.INTERVAL }}" \
           -a mailscout-autoscaler
