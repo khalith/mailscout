@@ -344,31 +344,39 @@ async def process_payload(payload: dict, db: AsyncSession):
             await db.rollback()
         return
 
-    inserted = 0
-    with db.no_autoflush:
-        for item in results:
-            try:
-                q2 = await safe_execute(
-                    db,
-                    select(EmailResult).where(
-                        EmailResult.upload_id == upload_id,
-                        EmailResult.email == item["email"],
-                    )
-                )
-                if q2.scalars().first():
-                    continue
-                r = EmailResult(
-                    upload_id=item["upload_id"],
-                    email=item["email"],
-                    normalized=item["normalized"],
-                    status=item["status"],
-                    score=item["score"],
-                    checks=item["checks"],
-                )
-                db.add(r)
-                inserted += 1
-            except Exception:
-                LOG.exception("Error inserting email result for %s", item.get("email"))
+    # ----------------------------------------------------------
+    # FAST BULK DB INSERT LOGIC (SINGLE INSERT)
+    # ----------------------------------------------------------
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    # 1) Fetch existing emails for this upload in ONE query
+    q_existing = await safe_execute(
+        db,
+        select(EmailResult.email).where(EmailResult.upload_id == upload_id)
+    )
+    existing = set(q_existing.scalars().all())
+
+    # 2) Build list of only new rows
+    rows = [
+        {
+            "upload_id": item["upload_id"],
+            "email": item["email"],
+            "normalized": item["normalized"],
+            "status": item["status"],
+            "score": item["score"],
+            "checks": item["checks"],
+        }
+        for item in results
+        if item["email"] not in existing
+    ]
+
+    inserted = len(rows)
+
+    # 3) Bulk INSERT in one shot (fastest)
+    if inserted > 0:
+        stmt = pg_insert(EmailResult).values(rows)
+        await safe_execute(db, stmt)
 
     try:
         stmt = (
